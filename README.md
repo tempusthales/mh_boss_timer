@@ -21,7 +21,7 @@ Each channel has its own independent timers, bosses, and dashboards.
 - **Remove Boss button** — dropdown for channel-only removal.
 - **Async JSON locks** — race-safe I/O handling.
 - **Dashboard auto-refresh** — updates once per second with timers.
-- **Custom logo support** — if `mh_logo.png` exists, it’s used as the dashboard thumbnail.
+- **Custom logo support** — if `mh.png` exists, it’s used as the dashboard thumbnail.
 
 ---
 
@@ -32,7 +32,7 @@ Each channel has its own independent timers, bosses, and dashboards.
 - **`channel_data.json`** — per-channel boss lists and timers (dynamic).
 - **`dashboards.json`** — stores dashboard message IDs by channel.
 - **`tracking.json`** — optional per-user filters.
-- **`mh_logo.png`** — optional thumbnail image.
+- **`mh.png`** — optional thumbnail image.
 
 ---
 

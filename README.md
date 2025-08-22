@@ -16,7 +16,7 @@ Each channel has its own independent timers, bosses, and dashboards.
 - **Per-channel timers** — independent tracking of bosses in each channel.
 - **One dropdown per boss** — options: `Killed`, `Edit Time`.
 - **Edit Time modal** — manually set time in `HH:MM:SS` format.
-- **Slash commands** — `/settime`, `/addboss`, `/removeboss`, `/kill`.
+- **Slash commands** — `/settime`, `/addboss`, `/removeboss`, `/kill`, `/startbot`, `/stopbot`.
 - **Add Boss button** — modal to add new bosses (also updates `bosses.json`).
 - **Remove Boss button** — dropdown for channel-only removal.
 - **Async JSON locks** — race-safe I/O handling.

@@ -2,7 +2,7 @@
 
 # Acknowledgements
 * [MH] Pride - Promptgramming
-* [MH] TT - GitHub, Server Hosting, other stuff.
+* [MH] TT - Code Optimization and cleanup, GitHub, Server Setup.
 
 <hr>
 

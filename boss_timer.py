@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import re
 from datetime import datetime
 
 import discord
@@ -60,7 +61,7 @@ dashboards = _load_sync(DASHBOARDS_FILE, {})  # {cid: msg_id}
 # ----------------------------
 intents = discord.Intents.default()
 intents.message_content = False
-bot = commands.Bot(command_prefix=None, intents=intents)
+bot = commands.Bot(command_prefix="!", intents=intents)
 
 # ----------------------------
 # Helpers
@@ -101,8 +102,8 @@ def get_channel_timers(cid: str):
     return channel_data[cid]["timers"]
 
 
-def parse_hms(text: str) -> int:
-    """Return seconds for 'HH:MM:SS' (tolerates H:MM:SS). Raises ValueError on bad format."""
+def parse_hms_strict(text: str) -> int:
+    """Strict HH:MM:SS (previous behavior)."""
     parts = text.strip().split(":")
     if len(parts) != 3:
         raise ValueError("Use HH:MM:SS")
@@ -110,6 +111,78 @@ def parse_hms(text: str) -> int:
     if m < 0 or m >= 60 or s < 0 or s >= 60 or h < 0:
         raise ValueError("Invalid time range")
     return h * 3600 + m * 60 + s
+
+
+def parse_duration(text: str) -> int:
+    """
+    Flexible parser:
+      - Token forms: 2h, 2h30m, 75m, 45s, 1.5h
+      - Clock: HH:MM:SS, MM:SS, HH:MM
+      - Bare integer: minutes
+    Returns total seconds (int). Raises ValueError on bad format.
+    """
+    t = text.strip().lower()
+    if not t:
+        raise ValueError("Empty time")
+
+    # Clock forms with ':'
+    if ":" in t:
+        parts = [p for p in t.split(":")]
+        if len(parts) == 3:
+            h, m, s = [int(p) for p in parts]
+        elif len(parts) == 2:
+            # MM:SS or HH:MM (disambiguate by range)
+            a, b = [int(p) for p in parts]
+            if b >= 60:
+                raise ValueError("Seconds/minutes must be < 60")
+            # Heuristic: treat as MM:SS if a < 60, else HH:MM
+            if a < 60:
+                h, m, s = 0, a, b
+            else:
+                h, m, s = a, b, 0
+        else:
+            raise ValueError("Use HH:MM:SS or MM:SS or HH:MM")
+        if m < 0 or m >= 60 or s < 0 or s >= 60 or h < 0:
+            raise ValueError("Invalid time range")
+        return h * 3600 + m * 60 + s
+
+    # Token forms like '1.5h30m', '90m', '45s'
+    token_matches = re.findall(r'(\d+(?:\.\d+)?)([hms])', t)
+    if token_matches:
+        total = 0.0
+        for val, unit in token_matches:
+            v = float(val)
+            if unit == "h":
+                total += v * 3600
+            elif unit == "m":
+                total += v * 60
+            else:
+                total += v
+        # Ensure no stray characters beyond h/m/s tokens
+        leftover = re.sub(r'(\d+(?:\.\d+)?[hms])', '', t).strip()
+        if leftover:
+            raise ValueError("Unrecognized time format")
+        return int(round(total))
+
+    # Bare integer -> minutes
+    if t.isdigit():
+        return int(t) * 60
+
+    raise ValueError("Unrecognized time format")
+
+
+def parse_time_input(user_text: str) -> int:
+    """
+    Wrapper that first tries flexible parsing; on failure, raises ValueError
+    with a helpful message listing accepted formats.
+    """
+    try:
+        return parse_duration(user_text)
+    except ValueError:
+        raise ValueError(
+            "Invalid time. Use formats like: `HH:MM:SS`, `MM:SS`, `HH:MM`, "
+            "`2h15m`, `90m`, `45s`, or a plain number for minutes."
+        )
 
 
 async def reset_boss_timer(cid: str, boss_name: str):
@@ -132,7 +205,6 @@ async def reset_boss_timer(cid: str, boss_name: str):
 
 async def set_boss_remaining(cid: str, boss_name: str, remaining_seconds: int):
     ensure_channel_record(cid)
-    # store absolute timestamp = now + remaining
     channel_data[cid]["timers"][boss_name] = now_ts() + int(remaining_seconds)
     await save_json(CHANNEL_DATA_FILE, channel_data)
 
@@ -181,14 +253,14 @@ class EditTimeModal(discord.ui.Modal, title="Edit Boss Time (HH:MM:SS)"):
         self.boss_name = boss_name
         self.time_input = discord.ui.TextInput(
             label="New Remaining Time",
-            placeholder="HH:MM:SS (e.g., 00:02:00)",
+            placeholder="HH:MM:SS (e.g., 00:02:00) or 2h15m / 90m / 45s",
             required=True,
         )
         self.add_item(self.time_input)
 
     async def on_submit(self, interaction: discord.Interaction):
         try:
-            secs = parse_hms(self.time_input.value)
+            secs = parse_time_input(self.time_input.value)
         except Exception as e:
             await interaction.response.send_message(f"❌ {e}", ephemeral=True)
             return
@@ -201,12 +273,6 @@ class EditTimeModal(discord.ui.Modal, title="Edit Boss Time (HH:MM:SS)"):
 
 
 class BossDropdown(discord.ui.Select):
-    """
-    Per-boss dropdown with 2 actions:
-      - Killed
-      - Edit Time (opens modal)
-    """
-
     def __init__(self, cid: str, boss_name: str):
         self.cid = cid
         self.boss_name = boss_name
@@ -264,12 +330,10 @@ class AddBossModal(discord.ui.Modal, title="Add New Boss"):
             )
             return
 
-        # Update master if missing
         if not find_master_boss(name):
             bosses_master.append({"name": name, "respawn": respawn_seconds})
             await save_json(BOSSES_FILE, bosses_master)
 
-        # Add to this channel if missing
         ensure_channel_record(self.cid)
         if not any(
             b["name"].lower() == name.lower() for b in channel_data[self.cid]["bosses"]
@@ -385,7 +449,30 @@ async def on_ready():
     print(f"Logged in as {bot.user}")
 
 
+@bot.tree.error
+async def on_app_command_error(
+    interaction: discord.Interaction, error: app_commands.AppCommandError
+):
+    if isinstance(error, app_commands.MissingPermissions):
+        if interaction.response.is_done():
+            await interaction.followup.send(
+                "❌ You need administrator permission to run this command.",
+                ephemeral=True,
+            )
+        else:
+            await interaction.response.send_message(
+                "❌ You need administrator permission to run this command.",
+                ephemeral=True,
+            )
+    else:
+        if interaction.response.is_done():
+            await interaction.followup.send(f"❌ {error}", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"❌ {error}", ephemeral=True)
+
+
 @bot.tree.command(description="Create a boss dashboard in this channel.")
+@app_commands.guild_only()
 async def timers_cmd(interaction: discord.Interaction):
     channel_id = str(interaction.channel.id)
     ensure_channel_record(channel_id)
@@ -400,7 +487,6 @@ async def timers_cmd(interaction: discord.Interaction):
             )
             return
         except discord.NotFound:
-            # Fall through to recreate
             pass
 
     embed, files = build_dashboard_embed_and_files(channel_id)
@@ -421,19 +507,22 @@ async def timers_cmd(interaction: discord.Interaction):
 
 
 @bot.tree.command(
-    description="Set remaining time for a boss in this channel (HH:MM:SS)."
+    description="Set remaining time for a boss in this channel (flexible formats)."
 )
-@app_commands.describe(name="Exact boss name", hhmmss="Time left, e.g. 00:02:00")
+@app_commands.describe(
+    name="Exact boss name",
+    hhmmss="Time left (e.g., 00:02:00, 2h15m, 90m, 45s, 23:59). Bare numbers = minutes.",
+)
+@app_commands.guild_only()
 async def settime(interaction: discord.Interaction, name: str, hhmmss: str):
     cid = str(interaction.channel.id)
-    # Make sure the boss exists in this channel
     if not any(b["name"].lower() == name.lower() for b in get_channel_bosses(cid)):
         await interaction.response.send_message(
             "❌ Boss not tracked in this channel.", ephemeral=True
         )
         return
     try:
-        secs = parse_hms(hhmmss)
+        secs = parse_time_input(hhmmss)
     except Exception as e:
         await interaction.response.send_message(f"❌ {e}", ephemeral=True)
         return
@@ -441,7 +530,7 @@ async def settime(interaction: discord.Interaction, name: str, hhmmss: str):
     await set_boss_remaining(cid, name, secs)
     await update_dashboard_message(cid)
     await interaction.response.send_message(
-        f"⏱ Set **{name}** to `{hhmmss}` remaining.", ephemeral=True
+        f"⏱ Set **{name}** to `{hhmmss}` (~{fmt_hms(secs)}).", ephemeral=True
     )
 
 
@@ -450,6 +539,7 @@ async def settime(interaction: discord.Interaction, name: str, hhmmss: str):
     name="Boss name", respawn_seconds="Default respawn time in seconds"
 )
 @app_commands.checks.has_permissions(administrator=True)
+@app_commands.guild_only()
 async def addboss(interaction: discord.Interaction, name: str, respawn_seconds: int):
     cid = str(interaction.channel.id)
 
@@ -471,6 +561,7 @@ async def addboss(interaction: discord.Interaction, name: str, respawn_seconds: 
 @bot.tree.command(description="Remove a boss from THIS channel only.")
 @app_commands.describe(name="Boss name to remove")
 @app_commands.checks.has_permissions(administrator=True)
+@app_commands.guild_only()
 async def removeboss(interaction: discord.Interaction, name: str):
     cid = str(interaction.channel.id)
     ensure_channel_record(cid)
@@ -494,6 +585,7 @@ async def removeboss(interaction: discord.Interaction, name: str):
 
 @bot.tree.command(description="Mark a boss as killed (uses default respawn).")
 @app_commands.describe(name="Exact boss name")
+@app_commands.guild_only()
 async def kill(interaction: discord.Interaction, name: str):
     cid = str(interaction.channel.id)
     ok = await reset_boss_timer(cid, name)
@@ -506,6 +598,7 @@ async def kill(interaction: discord.Interaction, name: str):
 
 @bot.tree.command(description="Initialize or ensure bot is active in this server (admin).")
 @app_commands.checks.has_permissions(administrator=True)
+@app_commands.guild_only()
 async def startbot(interaction: discord.Interaction):
     try:
         await bot.tree.sync(guild=interaction.guild)
@@ -522,13 +615,12 @@ async def startbot(interaction: discord.Interaction):
 
 @bot.tree.command(description="Stop the bot (admin).")
 @app_commands.checks.has_permissions(administrator=True)
+@app_commands.guild_only()
 async def stopbot(interaction: discord.Interaction):
     try:
-        # Save all data before stopping
         await save_json(BOSSES_FILE, bosses_master)
         await save_json(CHANNEL_DATA_FILE, channel_data)
         await save_json(DASHBOARDS_FILE, dashboards)
-        # Stop the update task
         if update_dashboards.is_running():
             update_dashboards.stop()
         await interaction.response.send_message(

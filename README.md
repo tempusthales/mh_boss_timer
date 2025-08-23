@@ -1,13 +1,12 @@
-# Mostly Harmless AOC Boss Timer Bot
+#Boss Timer Bot
 
 # Acknowledgements
-* [MH] Pride - Promptgramming
-* [MH] TT - GitHub, Server Hosting, other stuff.
+* Pride - Promptgramming
+* Tempus Thales - Code Optimization and cleanup, GitHub, Server Setup.
 
 <hr>
 
-A **discord.py 2.3+ bot** that tracks per-channel boss respawn timers with full interactive dashboards, dropdowns, and modals.  
-Each channel has its own independent timers, bosses, and dashboards.
+A discordbot that tracks boss respawn timers in separate threads, featuring interactive dashboards with dropdown menus and modals. Each thread has its own independent timers, boss lists, and customized dashboards, allowing multiple users to monitor and interact with the bot simultaneously.
 
 ---
 
@@ -16,12 +15,12 @@ Each channel has its own independent timers, bosses, and dashboards.
 - **Per-channel timers** — independent tracking of bosses in each channel.
 - **One dropdown per boss** — options: `Killed`, `Edit Time`.
 - **Edit Time modal** — manually set time in `HH:MM:SS` format.
-- **Slash commands** — `/settime`, `/addboss`, `/removeboss`, `/kill`.
+- **Slash commands** — `/settime`, `/addboss`, `/removeboss`, `/kill`, `/startbot`, `/stopbot`.
 - **Add Boss button** — modal to add new bosses (also updates `bosses.json`).
 - **Remove Boss button** — dropdown for channel-only removal.
 - **Async JSON locks** — race-safe I/O handling.
 - **Dashboard auto-refresh** — updates once per second with timers.
-- **Custom logo support** — if `mh_logo.png` exists, it’s used as the dashboard thumbnail.
+- **Custom logo support** — if `mh.png` exists, it’s used as the dashboard thumbnail.
 
 ---
 
@@ -32,7 +31,7 @@ Each channel has its own independent timers, bosses, and dashboards.
 - **`channel_data.json`** — per-channel boss lists and timers (dynamic).
 - **`dashboards.json`** — stores dashboard message IDs by channel.
 - **`tracking.json`** — optional per-user filters.
-- **`mh_logo.png`** — optional thumbnail image.
+- **`mh.png`** — optional thumbnail image.
 
 ---
 

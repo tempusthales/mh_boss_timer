@@ -1,1 +1,2 @@
-pip install -U discord.py python-dotenv
+discord.py
+python-dotenv

@@ -1,4 +1,4 @@
-{
+us{
     "_comment": "DO NOT EDIT: FILE GENERATED AUTOMATICALLY BY PANEL",
     "meta": {
         "version": "PLCN_v1",
@@ -8,7 +8,7 @@
     "name": "mh_boss_timer",
     "author": "iamtemmpusthales@gmail.com",
     "uuid": "a2b1c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
-    "description": "MH Boss Timer Bot\r\n\r\nTested with: https:\/\/github.com\/tempusthales\/mh_boss_timer",
+    "description": "MH Boss Timer Bot\r\n\r\nTested with: https:\/\/github.com\/username\/repo_name",
     "features": [],
     "docker_images": {
         "Python 3.13": "ghcr.io\/parkervcp\/yolks:python_3.13",
@@ -37,8 +37,34 @@
     },
     "variables": [
         {
+            "name": "[REQUIRED] Discord Bot Token",
+            "description": "The token for your Discord bot. Learn how to obtain a token and configure your bot application properly here: https:\/\/discord.com\/developers\/",
+            "default_value": "You need to get a token",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string"
+        },
+        {
+            "name": "Bot Prefix",
+            "description": "This sets the prefix for the bot. The prefix is used to control the commands. If you use !, the play command will be !play. If you do not set this, the prefix will be a mention of the bot (@Botname play).",
+            "env_variable": "BOT_PREFIX",
+            "default_value": "@mention",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|max:20"
+        },
+        {
+            "name": "Bot Alternate Prefix",
+            "description": "If you set this, the bot will also use this prefix in addition to \"Bot Prefix\". Set to NONE to not have an alternate prefix.",
+            "env_variable": "BOT_ALT_PREFIX",
+            "default_value": "NONE",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string|max:20"
+        },
+        {
             "name": "Git Repo Address",
-            "description": "Git repo to clone\r\n\r\nI.E. https:\/\/github.com\/parkervcp\/repo_name",
+            "description": "Git repo to clone\r\n\r\nI.E. https:\/\/github.com\/username\/repo_name",
             "env_variable": "GIT_ADDRESS",
             "default_value": "",
             "user_viewable": true,

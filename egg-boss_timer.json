@@ -6,7 +6,7 @@
     },
     "exported_at": "2025-08-23T21:31:36+00:00",
     "name": "Boss Timer",
-    "author": "Tempus Thales -=mh=- / eggs@goover.dev",
+    "author": "iamtempusthales@gmail.com",
     "uuid": "2e0194c9-df5a-4fe4-b8b8-22a9d0d19100",
     "description": "A bot that tracks boss respawn timers in separate threads, with interactive dashboards, dropdowns, and modals, enabling multiple users to monitor independent timers and boss lists simultaneously.",
     "tags": [

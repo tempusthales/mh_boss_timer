@@ -1,4 +1,4 @@
-# Mostly Harmless AOC Boss Timer Bot
+# Mostly Harmless Boss Timer Bot
 
 # Acknowledgements
 * [MH] Pride - Promptgramming

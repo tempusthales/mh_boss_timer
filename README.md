@@ -6,8 +6,7 @@
 
 <hr>
 
-A **discord.py 2.3+ bot** that tracks per-channel boss respawn timers with full interactive dashboards, dropdowns, and modals.  
-Each channel has its own independent timers, bosses, and dashboards.
+A discordbot that tracks boss respawn timers in separate threads, featuring interactive dashboards with dropdown menus and modals. Each thread has its own independent timers, boss lists, and customized dashboards, allowing multiple users to monitor and interact with the bot simultaneously.
 
 ---
 

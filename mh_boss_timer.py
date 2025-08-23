@@ -163,10 +163,10 @@ def build_dashboard_embed_and_files(cid: str) -> tuple[discord.Embed, list[disco
     )
 
     files = []
-    logo_path = "mh_logo.png"
+    logo_path = "mh.png"
     if os.path.exists(logo_path):
-        embed.set_thumbnail(url="attachment://mh_logo.png")
-        files = [discord.File(logo_path, filename="mh_logo.png")]
+        embed.set_thumbnail(url="attachment://mh.png")
+        files = [discord.File(logo_path, filename="mh.png")]
 
     return embed, files
 

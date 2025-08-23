@@ -1,8 +1,8 @@
-# Mostly Harmless Boss Timer Bot
+#Boss Timer Bot
 
 # Acknowledgements
-* [MH] Pride - Promptgramming
-* [MH] TT - Code Optimization and cleanup, GitHub, Server Setup.
+* Pride - Promptgramming
+* Tempus Thales - Code Optimization and cleanup, GitHub, Server Setup.
 
 <hr>
 

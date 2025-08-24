@@ -586,7 +586,7 @@ async def removeboss(interaction: discord.Interaction, name: str):
 @bot.tree.command(description="Mark a boss as killed (uses default respawn).")
 @app_commands.describe(name="Exact boss name")
 @app_commands.guild_only()
-async def kill(interaction: discord.Interaction, name: str):
+async def reset(interaction: discord.Interaction, name: str):
     cid = str(interaction.channel.id)
     ok = await reset_boss_timer(cid, name)
     await update_dashboard_message(cid)
@@ -594,45 +594,6 @@ async def kill(interaction: discord.Interaction, name: str):
         f"{'✅' if ok else '❌'} {name} {'timer reset.' if ok else 'not found.'}",
         ephemeral=True,
     )
-
-
-@bot.tree.command(description="Initialize or ensure bot is active in this server (admin).")
-@app_commands.checks.has_permissions(administrator=True)
-@app_commands.guild_only()
-async def startbot(interaction: discord.Interaction):
-    try:
-        await bot.tree.sync(guild=interaction.guild)
-        if not update_dashboards.is_running():
-            update_dashboards.start()
-        await interaction.response.send_message(
-            "✅ Bot is active and commands are synced.", ephemeral=True
-        )
-    except Exception as e:
-        await interaction.response.send_message(
-            f"❌ Failed to initialize bot: {e}", ephemeral=True
-        )
-
-
-@bot.tree.command(description="Stop the bot (admin).")
-@app_commands.checks.has_permissions(administrator=True)
-@app_commands.guild_only()
-async def stopbot(interaction: discord.Interaction):
-    try:
-        await save_json(BOSSES_FILE, bosses_master)
-        await save_json(CHANNEL_DATA_FILE, channel_data)
-        await save_json(DASHBOARDS_FILE, dashboards)
-        if update_dashboards.is_running():
-            update_dashboards.stop()
-        await interaction.response.send_message(
-            "✅ Bot is shutting down.", ephemeral=True
-        )
-        await bot.close()
-        os._exit(0)
-    except Exception as e:
-        await interaction.response.send_message(
-            f"❌ Failed to stop bot: {e}", ephemeral=True
-        )
-
 
 # ----------------------------
 # Run

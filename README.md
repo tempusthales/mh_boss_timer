@@ -26,12 +26,14 @@ A discordbot that tracks boss respawn timers in separate threads, featuring inte
 
 ## 📂 Files Used
 
-- **`bot.py`** — the main bot code.
-- **`bosses.json`** — master boss list (default respawn times).
-- **`channel_data.json`** — per-channel boss lists and timers (dynamic).
-- **`dashboards.json`** — stores dashboard message IDs by channel.
-- **`tracking.json`** — optional per-user filters.
-- **`mh.png`** — optional thumbnail image.
+- **`boss_timer.py`** — the main bot code.
+- **`bosses.json`** — master boss list (default respawn times). 
+- **`egg-boss_timer.json`** — Pelican Egg for hosting the bot.
+- **`requirements.txt`** — text file that lists all the packages and their versions needed for a project.
+- **`.env`** — environment variable for storing DISCORD_TOKEN.
+- **`mh.png`** — Logo thumbnail image.
+- **`boss_timer_banner.png`** - banner for Discord Application.
+- **`boss_timer_icon`** - icon for Discord Application.
 
 ---
 

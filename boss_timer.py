@@ -11,14 +11,7 @@ from dotenv import load_dotenv
 # Logging Setup
 # ----------------------------
 def setup_logging():
-    log_dir = "logs"
-    if not os.path.exists(log_dir):
-        try:
-            os.makedirs(log_dir)
-            logger.info(f"Created log directory: {log_dir}")
-        except Exception as e:
-            print(f"Failed to create log directory {log_dir}: {e}")
-    log_file = os.path.join(log_dir, f"bot_{datetime.now(timezone.UTC).strftime('%Y-%m-%d')}.log")
+    log_file = f"bot_{datetime.now(timezone.UTC).strftime('%Y-%m-%d')}.log"
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
@@ -28,6 +21,7 @@ def setup_logging():
         ]
     )
     logger = logging.getLogger("BossTimerBot")
+    logger.info(f"Logging initialized to {log_file}")
     return logger
 
 logger = setup_logging()
@@ -342,7 +336,9 @@ class DashboardView(discord.ui.View):
             self.add_item(BossDropdown(cid, b["name"]))
         self.add_item(AddBossButton(cid))
         self.add_item(RemoveBossButton(cid))
-        # Log if bosses were excluded due to component limit
+        # Log component count for debugging
+        component_count = len(self.children)
+        logger.info(f"DashboardView for channel {cid}: {component_count} components ({len(bosses[:max_dropdowns])} bosses, 2 buttons)")
         if len(bosses) > max_dropdowns:
             logger.warning(f"Channel {cid} has {len(bosses)} bosses, but only {max_dropdowns} included in DashboardView due to 25-component limit")
 
@@ -412,6 +408,9 @@ async def update_dashboard_message(channel_id: str):
         logger.error(f"HTTP error editing dashboard message {dashboards[channel_id]} in channel {channel_id}: {e}")
     except ValueError as e:
         logger.error(f"Failed to create DashboardView for channel {channel_id}: {e}")
+        # Fallback: Update without view to prevent task crash
+        await msg.edit(embed=embed, attachments=files)
+        logger.info(f"Fallback: Updated dashboard message for channel {channel_id} without view due to ValueError")
     except Exception as e:
         logger.error(f"Unexpected error updating dashboard for channel {channel_id}: {e}")
 

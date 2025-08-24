@@ -43,6 +43,22 @@ CHANNEL_DATA_FILE = "channel_data.json"  # per-channel bosses + timers
 DASHBOARDS_FILE = "dashboards.json"    # {channel_id: message_id}
 
 # ----------------------------
+# File Permissions Setup
+# ----------------------------
+def set_file_permissions():
+    json_files = [BOSSES_FILE, CHANNEL_DATA_FILE, DASHBOARDS_FILE]
+    for file in json_files:
+        try:
+            # Set permissions to 644 (rw-r--r--)
+            if os.path.exists(file):
+                os.chmod(file, 0o644)
+                logger.info(f"Set permissions to 644 for {file}")
+            else:
+                logger.info(f"File {file} does not exist yet, will be created with default permissions")
+        except Exception as e:
+            logger.error(f"Failed to set permissions for {file}: {e}")
+
+# ----------------------------
 # Async JSON I/O with locks
 # ----------------------------
 _locks = {}
@@ -73,6 +89,8 @@ async def save_json(path, data):
                 tmp.flush()
                 os.fsync(tmp.fileno())
             os.replace(tmp.name, path)
+            # Ensure new file has 644 permissions
+            os.chmod(path, 0o644)
             logger.info(f"Successfully saved JSON file: {path}")
         except Exception as e:
             logger.error(f"Failed to save JSON file {path}: {e}")
@@ -555,6 +573,7 @@ async def main():
         logger.error("DISCORD_TOKEN not found in environment variables")
         print("Error: DISCORD_TOKEN not found in environment variables.")
         return
+    set_file_permissions()  # Set JSON file permissions before loading
     await load_initial_data()
     try:
         await bot.start(TOKEN)

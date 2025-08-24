@@ -2,7 +2,7 @@ import asyncio
 import json
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 
 import discord
 from discord import app_commands
@@ -78,7 +78,8 @@ def fmt_hms(seconds: float) -> str:
     return f"{'-' if neg else ''}{h:02}:{m:02}:{s:02}"
 
 def now_ts() -> int:
-    return int(datetime.utcnow().timestamp())
+    # Py 3.13+ : use timezone-aware UTC
+    return int(datetime.now(timezone.utc).timestamp())
 
 def ensure_channel_record(cid: str):
     if cid not in channel_data:
@@ -205,8 +206,90 @@ def build_mentions(cid: str, boss_name: str) -> str:
     return " ".join(f"<@{uid}>" for uid in sorted(ids))
 
 # ----------------------------
-# UI Components
+# UI Components (Compact Dashboard)
 # ----------------------------
+class BossSelector(discord.ui.Select):
+    """Single global selector to choose a boss (caps components to avoid View overflow)."""
+    def __init__(self, cid: str):
+        self.cid = cid
+        bosses = [b["name"] for b in get_channel_bosses(cid)]
+        options = [discord.SelectOption(label=name, value=name) for name in bosses[:25]]
+        # If there are no bosses, we shouldn't add a Select at all (handled by DashboardView).
+        super().__init__(
+            placeholder="Select a boss…",
+            min_values=1,
+            max_values=1,
+            options=options,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        chosen = self.values[0]
+        # Stash selection on the parent view
+        self.view.selected_boss = chosen  # type: ignore[attr-defined]
+        await interaction.response.send_message(f"Selected **{chosen}**.", ephemeral=True)
+
+class KilledSelectedButton(discord.ui.Button):
+    def __init__(self, cid: str):
+        super().__init__(label="Killed (Reset)", style=discord.ButtonStyle.primary)
+        self.cid = cid
+    async def callback(self, interaction: discord.Interaction):
+        boss = getattr(self.view, "selected_boss", None)  # type: ignore[attr-defined]
+        if not boss:
+            await interaction.response.send_message("Select a boss first.", ephemeral=True)
+            return
+        ok = await reset_boss_timer(self.cid, boss, created_by=interaction.user.id)
+        await update_dashboard_message(self.cid)
+        await interaction.response.send_message(
+            f"{'✅' if ok else '❌'} {boss} {'timer reset.' if ok else 'not found.'}",
+            ephemeral=True,
+        )
+
+class EditSelectedButton(discord.ui.Button):
+    def __init__(self, cid: str):
+        super().__init__(label="Edit Time", style=discord.ButtonStyle.secondary)
+        self.cid = cid
+    async def callback(self, interaction: discord.Interaction):
+        boss = getattr(self.view, "selected_boss", None)  # type: ignore[attr-defined]
+        if not boss:
+            await interaction.response.send_message("Select a boss first.", ephemeral=True)
+            return
+        await interaction.response.send_modal(EditTimeModal(self.cid, boss))
+
+class SubscribeSelectedButton(discord.ui.Button):
+    def __init__(self, cid: str):
+        super().__init__(label="🔔 Subscribe", style=discord.ButtonStyle.success)
+        self.cid = cid
+    async def callback(self, interaction: discord.Interaction):
+        boss = getattr(self.view, "selected_boss", None)  # type: ignore[attr-defined]
+        if not boss:
+            await interaction.response.send_message("Select a boss first.", ephemeral=True)
+            return
+        subs = get_channel_subs(self.cid, boss)
+        subs.add(interaction.user.id)
+        set_channel_subs(self.cid, boss, subs)
+        await save_json(CHANNEL_DATA_FILE, channel_data)
+        await update_dashboard_message(self.cid)
+        await interaction.response.send_message(f"🔔 Subscribed to **{boss}**.", ephemeral=True)
+
+class UnsubscribeSelectedButton(discord.ui.Button):
+    def __init__(self, cid: str):
+        super().__init__(label="🔕 Unsubscribe", style=discord.ButtonStyle.secondary)
+        self.cid = cid
+    async def callback(self, interaction: discord.Interaction):
+        boss = getattr(self.view, "selected_boss", None)  # type: ignore[attr-defined]
+        if not boss:
+            await interaction.response.send_message("Select a boss first.", ephemeral=True)
+            return
+        subs = get_channel_subs(self.cid, boss)
+        if interaction.user.id in subs:
+            subs.remove(interaction.user.id)
+            set_channel_subs(self.cid, boss, subs)
+            await save_json(CHANNEL_DATA_FILE, channel_data)
+            await update_dashboard_message(self.cid)
+            await interaction.response.send_message(f"🔕 Unsubscribed from **{boss}**.", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"ℹ️ You were not subscribed to **{boss}**.", ephemeral=True)
+
 class EditTimeModal(discord.ui.Modal, title="Edit Boss Time (h/m/s)"):
     def __init__(self, cid: str, boss_name: str):
         super().__init__()
@@ -231,72 +314,6 @@ class EditTimeModal(discord.ui.Modal, title="Edit Boss Time (h/m/s)"):
             f"⏱ Set **{self.boss_name}** to `{self.time_input.value}` (~{fmt_hms(secs)}).",
             ephemeral=True,
         )
-
-class BossDropdown(discord.ui.Select):
-    """
-    Per-boss dropdown with 2 actions:
-      - Killed (reset by default respawn)
-      - Edit Time (opens modal)
-    """
-    def __init__(self, cid: str, boss_name: str):
-        self.cid = cid
-        self.boss_name = boss_name
-        super().__init__(
-            placeholder=boss_name,
-            min_values=1,
-            max_values=1,
-            options=[
-                discord.SelectOption(label="Killed", description=f"Reset {boss_name} by its default respawn"),
-                discord.SelectOption(label="Edit Time", description=f"Manually set remaining time for {boss_name}"),
-            ],
-        )
-
-    async def callback(self, interaction: discord.Interaction):
-        choice = self.values[0]
-        if choice == "Killed":
-            ok = await reset_boss_timer(self.cid, self.boss_name, created_by=interaction.user.id)
-            await update_dashboard_message(self.cid)
-            msg = "timer reset." if ok else "boss not found."
-            await interaction.response.send_message(f"✅ **{self.boss_name}** {msg}", ephemeral=True)
-        elif choice == "Edit Time":
-            await interaction.response.send_modal(EditTimeModal(self.cid, self.boss_name))
-
-class SubscribeButton(discord.ui.Button):
-    def __init__(self, cid: str, boss_name: str):
-        super().__init__(label="🔔 Subscribe", style=discord.ButtonStyle.success)
-        self.cid = cid
-        self.boss_name = boss_name
-
-    async def callback(self, interaction: discord.Interaction):
-        subs = get_channel_subs(self.cid, self.boss_name)
-        subs.add(interaction.user.id)
-        set_channel_subs(self.cid, self.boss_name, subs)
-        await save_json(CHANNEL_DATA_FILE, channel_data)
-        await update_dashboard_message(self.cid)
-        await interaction.response.send_message(
-            f"🔔 Subscribed to **{self.boss_name}**.", ephemeral=True
-        )
-
-class UnsubscribeButton(discord.ui.Button):
-    def __init__(self, cid: str, boss_name: str):
-        super().__init__(label="🔕 Unsubscribe", style=discord.ButtonStyle.secondary)
-        self.cid = cid
-        self.boss_name = boss_name
-
-    async def callback(self, interaction: discord.Interaction):
-        subs = get_channel_subs(self.cid, self.boss_name)
-        if interaction.user.id in subs:
-            subs.remove(interaction.user.id)
-            set_channel_subs(self.cid, self.boss_name, subs)
-            await save_json(CHANNEL_DATA_FILE, channel_data)
-            await update_dashboard_message(self.cid)
-            await interaction.response.send_message(
-                f"🔕 Unsubscribed from **{self.boss_name}**.", ephemeral=True
-            )
-        else:
-            await interaction.response.send_message(
-                f"ℹ️ You were not subscribed to **{self.boss_name}**.", ephemeral=True
-            )
 
 class AddBossModal(discord.ui.Modal, title="Add New Boss"):
     def __init__(self, cid: str):
@@ -338,7 +355,7 @@ class AddBossModal(discord.ui.Modal, title="Add New Boss"):
 class RemoveBossDropdown(discord.ui.Select):
     def __init__(self, cid: str):
         self.cid = cid
-        options = [discord.SelectOption(label=b["name"]) for b in get_channel_bosses(cid)]
+        options = [discord.SelectOption(label=b["name"]) for b in get_channel_bosses(cid)][:25]
         if not options:
             options = [discord.SelectOption(label="(No bosses)", default=True)]
         super().__init__(placeholder="Select boss to remove", min_values=1, max_values=1, options=options)
@@ -378,11 +395,17 @@ class DashboardView(discord.ui.View):
     def __init__(self, cid: str):
         super().__init__(timeout=None)
         self.cid = cid
-        for b in get_channel_bosses(cid):
-            name = b["name"]
-            self.add_item(BossDropdown(cid, name))
-            self.add_item(SubscribeButton(cid, name))
-            self.add_item(UnsubscribeButton(cid, name))
+        self.selected_boss: str | None = None
+
+        bosses = get_channel_bosses(cid)
+        if bosses:
+            # One selector + 4 action buttons keeps us far below the 25-item limit.
+            self.add_item(BossSelector(cid))
+            self.add_item(KilledSelectedButton(cid))
+            self.add_item(EditSelectedButton(cid))
+            self.add_item(SubscribeSelectedButton(cid))
+            self.add_item(UnsubscribeSelectedButton(cid))
+
         self.add_item(AddBossButton(cid))
         self.add_item(RemoveBossButton(cid))
 
@@ -422,7 +445,7 @@ async def process_alerts_for_channel(channel_id: str):
         remaining = ts - now_ts()
         boss_alerts = alerts.setdefault(boss_name, {"warn60": False, "respawned": False})
 
-        # Warn at T-60s (only once) — NOW WITH MENTIONS
+        # Warn at T-60s (only once) — WITH MENTIONS (your choice B)
         if 0 < remaining <= 60 and not boss_alerts.get("warn60", False):
             mentions = build_mentions(channel_id, boss_name)
             mention_prefix = f"{mentions} " if mentions else ""

@@ -78,7 +78,7 @@ def fmt_hms(seconds: float) -> str:
     return f"{'-' if neg else ''}{h:02}:{m:02}:{s:02}"
 
 def now_ts() -> int:
-    # Py 3.13+ : use timezone-aware UTC
+    # Py 3.13+: use timezone-aware UTC
     return int(datetime.now(timezone.utc).timestamp())
 
 def ensure_channel_record(cid: str):
@@ -206,25 +206,19 @@ def build_mentions(cid: str, boss_name: str) -> str:
     return " ".join(f"<@{uid}>" for uid in sorted(ids))
 
 # ----------------------------
-# UI Components (Compact Dashboard)
+# UI Components (Compact, with fixed rows)
 # ----------------------------
 class BossSelector(discord.ui.Select):
-    """Single global selector to choose a boss (caps components to avoid View overflow)."""
+    """Single selector to choose a boss (prevents View overflow)."""
     def __init__(self, cid: str):
         self.cid = cid
         bosses = [b["name"] for b in get_channel_bosses(cid)]
         options = [discord.SelectOption(label=name, value=name) for name in bosses[:25]]
-        # If there are no bosses, we shouldn't add a Select at all (handled by DashboardView).
-        super().__init__(
-            placeholder="Select a boss…",
-            min_values=1,
-            max_values=1,
-            options=options,
-        )
+        super().__init__(placeholder="Select a boss…", min_values=1, max_values=1, options=options)
+        self.row = 0  # occupy row 0 entirely
 
     async def callback(self, interaction: discord.Interaction):
         chosen = self.values[0]
-        # Stash selection on the parent view
         self.view.selected_boss = chosen  # type: ignore[attr-defined]
         await interaction.response.send_message(f"Selected **{chosen}**.", ephemeral=True)
 
@@ -232,6 +226,7 @@ class KilledSelectedButton(discord.ui.Button):
     def __init__(self, cid: str):
         super().__init__(label="Killed (Reset)", style=discord.ButtonStyle.primary)
         self.cid = cid
+        self.row = 1  # actions row
     async def callback(self, interaction: discord.Interaction):
         boss = getattr(self.view, "selected_boss", None)  # type: ignore[attr-defined]
         if not boss:
@@ -248,6 +243,7 @@ class EditSelectedButton(discord.ui.Button):
     def __init__(self, cid: str):
         super().__init__(label="Edit Time", style=discord.ButtonStyle.secondary)
         self.cid = cid
+        self.row = 1
     async def callback(self, interaction: discord.Interaction):
         boss = getattr(self.view, "selected_boss", None)  # type: ignore[attr-defined]
         if not boss:
@@ -259,6 +255,7 @@ class SubscribeSelectedButton(discord.ui.Button):
     def __init__(self, cid: str):
         super().__init__(label="🔔 Subscribe", style=discord.ButtonStyle.success)
         self.cid = cid
+        self.row = 1
     async def callback(self, interaction: discord.Interaction):
         boss = getattr(self.view, "selected_boss", None)  # type: ignore[attr-defined]
         if not boss:
@@ -275,6 +272,7 @@ class UnsubscribeSelectedButton(discord.ui.Button):
     def __init__(self, cid: str):
         super().__init__(label="🔕 Unsubscribe", style=discord.ButtonStyle.secondary)
         self.cid = cid
+        self.row = 1
     async def callback(self, interaction: discord.Interaction):
         boss = getattr(self.view, "selected_boss", None)  # type: ignore[attr-defined]
         if not boss:
@@ -359,6 +357,7 @@ class RemoveBossDropdown(discord.ui.Select):
         if not options:
             options = [discord.SelectOption(label="(No bosses)", default=True)]
         super().__init__(placeholder="Select boss to remove", min_values=1, max_values=1, options=options)
+        self.row = 0  # displayed in its own ephemeral view
 
     async def callback(self, interaction: discord.Interaction):
         choice = self.values[0]
@@ -379,6 +378,7 @@ class AddBossButton(discord.ui.Button):
     def __init__(self, cid: str):
         super().__init__(label="➕ Add Boss", style=discord.ButtonStyle.green)
         self.cid = cid
+        self.row = 2
     async def callback(self, interaction: discord.Interaction):
         await interaction.response.send_modal(AddBossModal(self.cid))
 
@@ -386,6 +386,7 @@ class RemoveBossButton(discord.ui.Button):
     def __init__(self, cid: str):
         super().__init__(label="🗑 Remove Boss", style=discord.ButtonStyle.danger)
         self.cid = cid
+        self.row = 2
     async def callback(self, interaction: discord.Interaction):
         view = discord.ui.View(timeout=60)
         view.add_item(RemoveBossDropdown(self.cid))
@@ -399,15 +400,14 @@ class DashboardView(discord.ui.View):
 
         bosses = get_channel_bosses(cid)
         if bosses:
-            # One selector + 4 action buttons keeps us far below the 25-item limit.
-            self.add_item(BossSelector(cid))
-            self.add_item(KilledSelectedButton(cid))
-            self.add_item(EditSelectedButton(cid))
-            self.add_item(SubscribeSelectedButton(cid))
-            self.add_item(UnsubscribeSelectedButton(cid))
+            self.add_item(BossSelector(cid))            # row 0
+            self.add_item(KilledSelectedButton(cid))    # row 1
+            self.add_item(EditSelectedButton(cid))      # row 1
+            self.add_item(SubscribeSelectedButton(cid)) # row 1
+            self.add_item(UnsubscribeSelectedButton(cid)) # row 1
 
-        self.add_item(AddBossButton(cid))
-        self.add_item(RemoveBossButton(cid))
+        self.add_item(AddBossButton(cid))               # row 2
+        self.add_item(RemoveBossButton(cid))            # row 2
 
 # ----------------------------
 # Dashboard render/update
@@ -445,7 +445,7 @@ async def process_alerts_for_channel(channel_id: str):
         remaining = ts - now_ts()
         boss_alerts = alerts.setdefault(boss_name, {"warn60": False, "respawned": False})
 
-        # Warn at T-60s (only once) — WITH MENTIONS (your choice B)
+        # Warn at T-60s (only once) — WITH MENTIONS (Option B)
         if 0 < remaining <= 60 and not boss_alerts.get("warn60", False):
             mentions = build_mentions(channel_id, boss_name)
             mention_prefix = f"{mentions} " if mentions else ""
@@ -619,7 +619,8 @@ async def listbosses(interaction: discord.Interaction):
 @bot.tree.command(name="about", description="About this bot.")
 @app_commands.guild_only()
 async def about(interaction: discord.Interaction):
-    await interaction.response.send_message("This is based off a true story...", ephemeral=True)
+    # Public (non-ephemeral) per Q3
+    await interaction.response.send_message("This is based off a true story...")
 
 # ----------------------------
 # Run

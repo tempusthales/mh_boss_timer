@@ -335,10 +335,16 @@ class DashboardView(discord.ui.View):
     def __init__(self, cid: str):
         super().__init__(timeout=None)
         self.cid = cid
-        for b in get_channel_bosses(cid):
+        bosses = get_channel_bosses(cid)
+        # Limit to 23 bosses to leave space for AddBossButton and RemoveBossButton (25 component limit)
+        max_dropdowns = 23
+        for i, b in enumerate(bosses[:max_dropdowns]):
             self.add_item(BossDropdown(cid, b["name"]))
         self.add_item(AddBossButton(cid))
         self.add_item(RemoveBossButton(cid))
+        # Log if bosses were excluded due to component limit
+        if len(bosses) > max_dropdowns:
+            logger.warning(f"Channel {cid} has {len(bosses)} bosses, but only {max_dropdowns} included in DashboardView due to 25-component limit")
 
 # ----------------------------
 # Dashboard render/update
@@ -386,6 +392,9 @@ async def update_dashboard_message(channel_id: str):
         lines = ["No bosses yet. Use ➕ **Add Boss** to get started."]
 
     embed = discord.Embed(title="Boss Timers", description="\n".join(lines), color=0x00ff00)
+    # Add warning if bosses are excluded from the view
+    if len(bosses) > 23:
+        embed.set_footer(text="Some bosses excluded due to component limit. Use /updatetime or /reset for others.")
 
     files = []
     logo_path = "logo.png"
@@ -401,6 +410,8 @@ async def update_dashboard_message(channel_id: str):
         logger.error(f"Bot lacks permission to edit message {dashboards[channel_id]} in channel {channel_id}")
     except discord.HTTPException as e:
         logger.error(f"HTTP error editing dashboard message {dashboards[channel_id]} in channel {channel_id}: {e}")
+    except ValueError as e:
+        logger.error(f"Failed to create DashboardView for channel {channel_id}: {e}")
     except Exception as e:
         logger.error(f"Unexpected error updating dashboard for channel {channel_id}: {e}")
 
@@ -452,6 +463,9 @@ async def setdashboard(interaction: discord.Interaction):
         lines = ["No bosses yet. Use ➕ **Add Boss** to get started."]
 
     embed = discord.Embed(title="Boss Timers", description="\n".join(lines), color=0x00ff00)
+    # Add warning if bosses are excluded from the view
+    if len(bosses) > 23:
+        embed.set_footer(text="Some bosses excluded due to component limit. Use /updatetime or /reset for others.")
 
     files = []
     logo_path = "logo.png"

@@ -10,6 +10,11 @@ from discord.ext import commands, tasks
 from dotenv import load_dotenv
 
 # ----------------------------
+# Build tag (visible in logs)
+# ----------------------------
+BUILD_TAG = "2025-08-24-compactview-rowfix-fallback-v2"
+
+# ----------------------------
 # Setup
 # ----------------------------
 load_dotenv()
@@ -78,7 +83,7 @@ def fmt_hms(seconds: float) -> str:
     return f"{'-' if neg else ''}{h:02}:{m:02}:{s:02}"
 
 def now_ts() -> int:
-    # Py 3.13+: use timezone-aware UTC
+    # Py 3.13+: use timezone-aware UTC (no utcnow)
     return int(datetime.now(timezone.utc).timestamp())
 
 def ensure_channel_record(cid: str):
@@ -206,16 +211,15 @@ def build_mentions(cid: str, boss_name: str) -> str:
     return " ".join(f"<@{uid}>" for uid in sorted(ids))
 
 # ----------------------------
-# UI Components (Compact, with fixed rows)
+# UI Components (Compact, fixed rows)
 # ----------------------------
 class BossSelector(discord.ui.Select):
-    """Single selector to choose a boss (prevents View overflow)."""
     def __init__(self, cid: str):
         self.cid = cid
         bosses = [b["name"] for b in get_channel_bosses(cid)]
         options = [discord.SelectOption(label=name, value=name) for name in bosses[:25]]
         super().__init__(placeholder="Select a boss…", min_values=1, max_values=1, options=options)
-        self.row = 0  # occupy row 0 entirely
+        self.row = 0  # occupies row 0 entirely
 
     async def callback(self, interaction: discord.Interaction):
         chosen = self.values[0]
@@ -226,7 +230,7 @@ class KilledSelectedButton(discord.ui.Button):
     def __init__(self, cid: str):
         super().__init__(label="Killed (Reset)", style=discord.ButtonStyle.primary)
         self.cid = cid
-        self.row = 1  # actions row
+        self.row = 1
     async def callback(self, interaction: discord.Interaction):
         boss = getattr(self.view, "selected_boss", None)  # type: ignore[attr-defined]
         if not boss:
@@ -357,7 +361,7 @@ class RemoveBossDropdown(discord.ui.Select):
         if not options:
             options = [discord.SelectOption(label="(No bosses)", default=True)]
         super().__init__(placeholder="Select boss to remove", min_values=1, max_values=1, options=options)
-        self.row = 0  # displayed in its own ephemeral view
+        self.row = 0  # for the ephemeral view only
 
     async def callback(self, interaction: discord.Interaction):
         choice = self.values[0]
@@ -409,6 +413,20 @@ class DashboardView(discord.ui.View):
         self.add_item(AddBossButton(cid))               # row 2
         self.add_item(RemoveBossButton(cid))            # row 2
 
+class MinimalView(discord.ui.View):
+    """Fallback view if the main DashboardView cannot be constructed for any reason."""
+    def __init__(self, cid: str):
+        super().__init__(timeout=None)
+        self.add_item(AddBossButton(cid))   # row 2
+        self.add_item(RemoveBossButton(cid))# row 2
+
+def build_dashboard_view(cid: str) -> discord.ui.View:
+    # If anything goes wrong constructing the main view, fall back to a minimal, safe view.
+    try:
+        return DashboardView(cid)
+    except Exception:
+        return MinimalView(cid)
+
 # ----------------------------
 # Dashboard render/update
 # ----------------------------
@@ -424,7 +442,11 @@ async def update_dashboard_message(channel_id: str):
         return
 
     embed, files = build_dashboard_embed_and_files(channel_id)
-    await msg.edit(embed=embed, view=DashboardView(channel_id), attachments=files)
+
+    # On edit: don't pass "attachments=files" (wrong type). Either re-upload files or leave as-is.
+    # We just edit embed + view; the original attachment remains unless you explicitly remove it.
+    view = build_dashboard_view(channel_id)
+    await msg.edit(embed=embed, view=view)
 
 @tasks.loop(minutes=1)
 async def update_dashboards():
@@ -445,7 +467,7 @@ async def process_alerts_for_channel(channel_id: str):
         remaining = ts - now_ts()
         boss_alerts = alerts.setdefault(boss_name, {"warn60": False, "respawned": False})
 
-        # Warn at T-60s (only once) — WITH MENTIONS (Option B)
+        # Warn at T-60s (only once) — WITH MENTIONS
         if 0 < remaining <= 60 and not boss_alerts.get("warn60", False):
             mentions = build_mentions(channel_id, boss_name)
             mention_prefix = f"{mentions} " if mentions else ""
@@ -474,7 +496,7 @@ async def process_alerts_for_channel(channel_id: str):
 async def on_ready():
     await bot.tree.sync()
     update_dashboards.start()
-    print(f"Logged in as {bot.user}")
+    print(f"Logged in as {bot.user} | BUILD_TAG={BUILD_TAG}")
 
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
@@ -505,7 +527,7 @@ async def setdashboard(interaction: discord.Interaction):
             pass
 
     embed, files = build_dashboard_embed_and_files(channel_id)
-    msg = await interaction.channel.send(embed=embed, view=DashboardView(channel_id), files=files)
+    msg = await interaction.channel.send(embed=embed, view=build_dashboard_view(channel_id), files=files)
     dashboards[channel_id] = str(msg.id)
     await save_json(DASHBOARDS_FILE, dashboards)
 
@@ -619,7 +641,6 @@ async def listbosses(interaction: discord.Interaction):
 @bot.tree.command(name="about", description="About this bot.")
 @app_commands.guild_only()
 async def about(interaction: discord.Interaction):
-    # Public (non-ephemeral) per Q3
     await interaction.response.send_message("This is based off a true story...")
 
 # ----------------------------

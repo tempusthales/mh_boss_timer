@@ -31,7 +31,7 @@ A discordbot that tracks boss respawn timers in separate threads, featuring inte
 - **`egg-boss_timer.json`** — Pelican Egg for hosting the bot.
 - **`requirements.txt`** — text file that lists all the packages and their versions needed for a project.
 - **`.env`** — environment variable for storing DISCORD_TOKEN.
-- **`mh.png`** — Logo thumbnail image.
+- **`ogo.png`** — Logo thumbnail image.
 - **`boss_timer_banner.png`** - banner for Discord Application.
 - **`boss_timer_icon`** - icon for Discord Application.
 

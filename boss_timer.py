@@ -279,10 +279,10 @@ async def update_dashboard_message(channel_id: str):
     embed = discord.Embed(title="Boss Timers", description="\n".join(lines), color=0x00ff00)
 
     files = []
-    logo_path = "mh_logo.png"
+    logo_path = "logo.png"
     if os.path.exists(logo_path):
-        embed.set_thumbnail(url="attachment://mh_logo.png")
-        files = [discord.File(logo_path, filename="mh_logo.png")]
+        embed.set_thumbnail(url="attachment://logo.png")
+        files = [discord.File(logo_path, filename="logo.png")]
 
     await msg.edit(embed=embed, view=DashboardView(channel_id), attachments=files)
 
@@ -331,10 +331,10 @@ async def setdashboard(interaction: discord.Interaction):
     embed = discord.Embed(title="Boss Timers", description="\n".join(lines), color=0x00ff00)
 
     files = []
-    logo_path = "mh_logo.png"
+    logo_path = "logo.png"
     if os.path.exists(logo_path):
-        embed.set_thumbnail(url="attachment://mh_logo.png")
-        files = [discord.File(logo_path, filename="mh_logo.png")]
+        embed.set_thumbnail(url="attachment://logo.png")
+        files = [discord.File(logo_path, filename="logo.png")]
 
     msg = await interaction.channel.send(embed=embed, view=DashboardView(channel_id), files=files)
     dashboards[channel_id] = str(msg.id)

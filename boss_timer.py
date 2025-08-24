@@ -15,21 +15,19 @@ from dotenv import load_dotenv
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
 
-BOSSES_FILE = "bosses.json"  # master defaults (global)
-CHANNEL_DATA_FILE = "channel_data.json"  # per-channel bosses + timers
-DASHBOARDS_FILE = "dashboards.json"  # {channel_id: message_id}
+BOSSES_FILE = "bosses.json"        # master defaults (global)
+CHANNEL_DATA_FILE = "channel_data.json"  # per-channel bosses + timers + subs + alerts + creators
+DASHBOARDS_FILE = "dashboards.json"      # {channel_id: message_id}
 
 # ----------------------------
 # Async JSON I/O with locks
 # ----------------------------
 _locks = {}
 
-
 def _get_lock(path: str) -> asyncio.Lock:
     if path not in _locks:
         _locks[path] = asyncio.Lock()
     return _locks[path]
-
 
 def _load_sync(path, default):
     if os.path.exists(path):
@@ -37,38 +35,39 @@ def _load_sync(path, default):
             return json.load(f)
     return default
 
-
 async def load_json(path, default):
     async with _get_lock(path):
         return _load_sync(path, default)
-
 
 async def save_json(path, data):
     async with _get_lock(path):
         with open(path, "w") as f:
             json.dump(data, f, indent=4)
 
-
 # initial sync load (safe at startup)
 bosses_master = _load_sync(BOSSES_FILE, [])  # [{name, respawn}]
-channel_data = _load_sync(
-    CHANNEL_DATA_FILE, {}
-)  # {cid: {bosses:[{name, respawn}], timers:{name: ts}}}
+# channel_data[cid] = {
+#   "bosses":[{name, respawn}],
+#   "timers":{name: ts},
+#   "subs":{name: [user_id,...]},
+#   "creators":{name: user_id},
+#   "alerts":{name: {"warn60": bool, "respawned": bool}}
+# }
+channel_data = _load_sync(CHANNEL_DATA_FILE, {})
 dashboards = _load_sync(DASHBOARDS_FILE, {})  # {cid: msg_id}
 
 # ----------------------------
 # Bot
 # ----------------------------
 intents = discord.Intents.default()
-# intents.message_content = False <--- DEPRECATED
-# bot = commands.Bot(command_prefix="!", intents=intents) <--- DEPRECATED
+intents.message_content = False
+bot = commands.Bot(command_prefix="!", intents=intents)
 
 # ----------------------------
 # Helpers
 # ----------------------------
 def find_master_boss(name: str):
     return next((b for b in bosses_master if b["name"].lower() == name.lower()), None)
-
 
 def fmt_hms(seconds: float) -> str:
     neg = seconds < 0
@@ -78,136 +77,88 @@ def fmt_hms(seconds: float) -> str:
     s = seconds % 60
     return f"{'-' if neg else ''}{h:02}:{m:02}:{s:02}"
 
-
 def now_ts() -> int:
     return int(datetime.utcnow().timestamp())
 
-
 def ensure_channel_record(cid: str):
     if cid not in channel_data:
-        channel_data[cid] = {"bosses": [], "timers": {}}
-    if "bosses" not in channel_data[cid]:
-        channel_data[cid]["bosses"] = []
-    if "timers" not in channel_data[cid]:
-        channel_data[cid]["timers"] = {}
-
+        channel_data[cid] = {"bosses": [], "timers": {}, "subs": {}, "creators": {}, "alerts": {}}
+    cd = channel_data[cid]
+    cd.setdefault("bosses", [])
+    cd.setdefault("timers", {})
+    cd.setdefault("subs", {})
+    cd.setdefault("creators", {})
+    cd.setdefault("alerts", {})
 
 def get_channel_bosses(cid: str):
     ensure_channel_record(cid)
     return channel_data[cid]["bosses"]
 
-
 def get_channel_timers(cid: str):
     ensure_channel_record(cid)
     return channel_data[cid]["timers"]
 
+def get_channel_subs(cid: str, boss_name: str):
+    ensure_channel_record(cid)
+    return set(channel_data[cid]["subs"].get(boss_name, []))
 
-def parse_hms_strict(text: str) -> int:
-    """Strict HH:MM:SS (previous behavior)."""
-    parts = text.strip().split(":")
-    if len(parts) != 3:
-        raise ValueError("Use HH:MM:SS")
-    h, m, s = [int(x) for x in parts]
-    if m < 0 or m >= 60 or s < 0 or s >= 60 or h < 0:
-        raise ValueError("Invalid time range")
-    return h * 3600 + m * 60 + s
+def set_channel_subs(cid: str, boss_name: str, subs_set):
+    ensure_channel_record(cid)
+    channel_data[cid]["subs"][boss_name] = list({int(x) for x in subs_set})
 
+def set_creator(cid: str, boss_name: str, user_id: int):
+    ensure_channel_record(cid)
+    channel_data[cid]["creators"][boss_name] = int(user_id)
 
-def parse_duration(text: str) -> int:
+def clear_alert_flags(cid: str, boss_name: str):
+    ensure_channel_record(cid)
+    channel_data[cid]["alerts"][boss_name] = {"warn60": False, "respawned": False}
+
+def parse_tokens_duration(text: str) -> int:
     """
-    Flexible parser:
-      - Token forms: 2h, 2h30m, 75m, 45s, 1.5h
-      - Clock: HH:MM:SS, MM:SS, HH:MM
-      - Bare integer: minutes
+    Accepts ONLY unit tokens: '1h', '30m', '45s', '1h30m', '1.5h'.
     Returns total seconds (int). Raises ValueError on bad format.
     """
-    t = text.strip().lower()
+    t = text.strip().lower().replace(" ", "")
     if not t:
-        raise ValueError("Empty time")
-
-    # Clock forms with ':'
-    if ":" in t:
-        parts = [p for p in t.split(":")]
-        if len(parts) == 3:
-            h, m, s = [int(p) for p in parts]
-        elif len(parts) == 2:
-            # MM:SS or HH:MM (disambiguate by range)
-            a, b = [int(p) for p in parts]
-            if b >= 60:
-                raise ValueError("Seconds/minutes must be < 60")
-            # Heuristic: treat as MM:SS if a < 60, else HH:MM
-            if a < 60:
-                h, m, s = 0, a, b
-            else:
-                h, m, s = a, b, 0
+        raise ValueError("Empty time.")
+    tokens = re.findall(r'(\d+(?:\.\d+)?)([hms])', t)
+    if not tokens:
+        raise ValueError("Use unit tokens like 1h, 30m, 45s, or combos like 1h30m.")
+    reconstructed = "".join(f"{v}{u}" for v, u in tokens)
+    if reconstructed != t:
+        raise ValueError("Unrecognized format. Valid examples: 1h, 30m, 45s, 1h30m, 1.5h.")
+    total = 0.0
+    for val, unit in tokens:
+        v = float(val)
+        if unit == "h":
+            total += v * 3600
+        elif unit == "m":
+            total += v * 60
         else:
-            raise ValueError("Use HH:MM:SS or MM:SS or HH:MM")
-        if m < 0 or m >= 60 or s < 0 or s >= 60 or h < 0:
-            raise ValueError("Invalid time range")
-        return h * 3600 + m * 60 + s
+            total += v
+    return int(round(total))
 
-    # Token forms like '1.5h30m', '90m', '45s'
-    token_matches = re.findall(r'(\d+(?:\.\d+)?)([hms])', t)
-    if token_matches:
-        total = 0.0
-        for val, unit in token_matches:
-            v = float(val)
-            if unit == "h":
-                total += v * 3600
-            elif unit == "m":
-                total += v * 60
-            else:
-                total += v
-        # Ensure no stray characters beyond h/m/s tokens
-        leftover = re.sub(r'(\d+(?:\.\d+)?[hms])', '', t).strip()
-        if leftover:
-            raise ValueError("Unrecognized time format")
-        return int(round(total))
-
-    # Bare integer -> minutes
-    if t.isdigit():
-        return int(t) * 60
-
-    raise ValueError("Unrecognized time format")
-
-
-def parse_time_input(user_text: str) -> int:
-    """
-    Wrapper that first tries flexible parsing; on failure, raises ValueError
-    with a helpful message listing accepted formats.
-    """
-    try:
-        return parse_duration(user_text)
-    except ValueError:
-        raise ValueError(
-            "Invalid time. Use formats like: `HH:MM:SS`, `MM:SS`, `HH:MM`, "
-            "`2h15m`, `90m`, `45s`, or a plain number for minutes."
-        )
-
-
-async def reset_boss_timer(cid: str, boss_name: str):
+async def reset_boss_timer(cid: str, boss_name: str, created_by: int | None = None):
     ensure_channel_record(cid)
-    local = next(
-        (
-            b
-            for b in channel_data[cid]["bosses"]
-            if b["name"].lower() == boss_name.lower()
-        ),
-        None,
-    )
+    local = next((b for b in channel_data[cid]["bosses"] if b["name"].lower() == boss_name.lower()), None)
     base = local or find_master_boss(boss_name)
     if not base:
         return False
     channel_data[cid]["timers"][base["name"]] = now_ts() + int(base["respawn"])
+    if created_by is not None:
+        set_creator(cid, base["name"], created_by)
+    clear_alert_flags(cid, base["name"])
     await save_json(CHANNEL_DATA_FILE, channel_data)
     return True
 
-
-async def set_boss_remaining(cid: str, boss_name: str, remaining_seconds: int):
+async def set_boss_remaining(cid: str, boss_name: str, remaining_seconds: int, created_by: int | None = None):
     ensure_channel_record(cid)
     channel_data[cid]["timers"][boss_name] = now_ts() + int(remaining_seconds)
+    if created_by is not None:
+        set_creator(cid, boss_name, created_by)
+    clear_alert_flags(cid, boss_name)
     await save_json(CHANNEL_DATA_FILE, channel_data)
-
 
 def build_dashboard_embed_and_files(cid: str) -> tuple[discord.Embed, list[discord.File]]:
     ensure_channel_record(cid)
@@ -217,22 +168,22 @@ def build_dashboard_embed_and_files(cid: str) -> tuple[discord.Embed, list[disco
     lines = []
     for b in bosses:
         name = b["name"]
+        subs_count = len(get_channel_subs(cid, name))
+        subs_suffix = f" · {subs_count} subs" if subs_count else ""
         if name in timers:
             remaining = timers[name] - now_ts()
             if remaining > 0:
                 respawn_ts = int(timers[name])
-                lines.append(f"**{name}** — Respawns <t:{respawn_ts}:R>")
+                lines.append(f"**{name}** — Respawns <t:{respawn_ts}:R>{subs_suffix}")
             else:
-                lines.append(f"**{name}** — READY")
+                lines.append(f"**{name}** — READY{subs_suffix}")
         else:
-            lines.append(f"**{name}** — READY")
+            lines.append(f"**{name}** — READY{subs_suffix}")
 
     if not lines:
         lines = ["No bosses yet. Use ➕ **Add Boss** to get started."]
 
-    embed = discord.Embed(
-        title="Boss Timers", description="\n".join(lines), color=0x00FF00
-    )
+    embed = discord.Embed(title="Boss Timers", description="\n".join(lines), color=0x00FF00)
 
     files = []
     logo_path = "mh.png"
@@ -242,37 +193,51 @@ def build_dashboard_embed_and_files(cid: str) -> tuple[discord.Embed, list[disco
 
     return embed, files
 
+def build_mentions(cid: str, boss_name: str) -> str:
+    ensure_channel_record(cid)
+    creator_id = channel_data[cid]["creators"].get(boss_name)
+    subs = get_channel_subs(cid, boss_name)
+    ids = set(subs)
+    if creator_id:
+        ids.add(int(creator_id))
+    if not ids:
+        return ""
+    return " ".join(f"<@{uid}>" for uid in sorted(ids))
 
 # ----------------------------
 # UI Components
 # ----------------------------
-class EditTimeModal(discord.ui.Modal, title="Edit Boss Time (HH:MM:SS)"):
+class EditTimeModal(discord.ui.Modal, title="Edit Boss Time (h/m/s)"):
     def __init__(self, cid: str, boss_name: str):
         super().__init__()
         self.cid = cid
         self.boss_name = boss_name
         self.time_input = discord.ui.TextInput(
             label="New Remaining Time",
-            placeholder="HH:MM:SS (e.g., 00:02:00) or 2h15m / 90m / 45s",
+            placeholder="e.g., 1h, 30m, 45s, 1h30m, 1.5h",
             required=True,
         )
         self.add_item(self.time_input)
 
     async def on_submit(self, interaction: discord.Interaction):
         try:
-            secs = parse_time_input(self.time_input.value)
+            secs = parse_tokens_duration(self.time_input.value)
         except Exception as e:
             await interaction.response.send_message(f"❌ {e}", ephemeral=True)
             return
-        await set_boss_remaining(self.cid, self.boss_name, secs)
+        await set_boss_remaining(self.cid, self.boss_name, secs, created_by=interaction.user.id)
         await update_dashboard_message(self.cid)
         await interaction.response.send_message(
-            f"⏱ Set **{self.boss_name}** to `{self.time_input.value}` remaining.",
+            f"⏱ Set **{self.boss_name}** to `{self.time_input.value}` (~{fmt_hms(secs)}).",
             ephemeral=True,
         )
 
-
 class BossDropdown(discord.ui.Select):
+    """
+    Per-boss dropdown with 2 actions:
+      - Killed (reset by default respawn)
+      - Edit Time (opens modal)
+    """
     def __init__(self, cid: str, boss_name: str):
         self.cid = cid
         self.boss_name = boss_name
@@ -281,31 +246,57 @@ class BossDropdown(discord.ui.Select):
             min_values=1,
             max_values=1,
             options=[
-                discord.SelectOption(
-                    label="Killed",
-                    description=f"Reset {boss_name} by its default respawn",
-                ),
-                discord.SelectOption(
-                    label="Edit Time",
-                    description=f"Manually set remaining time for {boss_name}",
-                ),
+                discord.SelectOption(label="Killed", description=f"Reset {boss_name} by its default respawn"),
+                discord.SelectOption(label="Edit Time", description=f"Manually set remaining time for {boss_name}"),
             ],
         )
 
     async def callback(self, interaction: discord.Interaction):
         choice = self.values[0]
         if choice == "Killed":
-            ok = await reset_boss_timer(self.cid, self.boss_name)
+            ok = await reset_boss_timer(self.cid, self.boss_name, created_by=interaction.user.id)
             await update_dashboard_message(self.cid)
             msg = "timer reset." if ok else "boss not found."
-            await interaction.response.send_message(
-                f"✅ **{self.boss_name}** {msg}", ephemeral=True
-            )
+            await interaction.response.send_message(f"✅ **{self.boss_name}** {msg}", ephemeral=True)
         elif choice == "Edit Time":
-            await interaction.response.send_modal(
-                EditTimeModal(self.cid, self.boss_name)
-            )
+            await interaction.response.send_modal(EditTimeModal(self.cid, self.boss_name))
 
+class SubscribeButton(discord.ui.Button):
+    def __init__(self, cid: str, boss_name: str):
+        super().__init__(label="🔔 Subscribe", style=discord.ButtonStyle.success)
+        self.cid = cid
+        self.boss_name = boss_name
+
+    async def callback(self, interaction: discord.Interaction):
+        subs = get_channel_subs(self.cid, self.boss_name)
+        subs.add(interaction.user.id)
+        set_channel_subs(self.cid, self.boss_name, subs)
+        await save_json(CHANNEL_DATA_FILE, channel_data)
+        await update_dashboard_message(self.cid)
+        await interaction.response.send_message(
+            f"🔔 Subscribed to **{self.boss_name}**.", ephemeral=True
+        )
+
+class UnsubscribeButton(discord.ui.Button):
+    def __init__(self, cid: str, boss_name: str):
+        super().__init__(label="🔕 Unsubscribe", style=discord.ButtonStyle.secondary)
+        self.cid = cid
+        self.boss_name = boss_name
+
+    async def callback(self, interaction: discord.Interaction):
+        subs = get_channel_subs(self.cid, self.boss_name)
+        if interaction.user.id in subs:
+            subs.remove(interaction.user.id)
+            set_channel_subs(self.cid, self.boss_name, subs)
+            await save_json(CHANNEL_DATA_FILE, channel_data)
+            await update_dashboard_message(self.cid)
+            await interaction.response.send_message(
+                f"🔕 Unsubscribed from **{self.boss_name}**.", ephemeral=True
+            )
+        else:
+            await interaction.response.send_message(
+                f"ℹ️ You were not subscribed to **{self.boss_name}**.", ephemeral=True
+            )
 
 class AddBossModal(discord.ui.Modal, title="Add New Boss"):
     def __init__(self, cid: str):
@@ -315,7 +306,9 @@ class AddBossModal(discord.ui.Modal, title="Add New Boss"):
             label="Boss Name", placeholder="Enter the boss name", required=True
         )
         self.respawn = discord.ui.TextInput(
-            label="Respawn (seconds)", placeholder="e.g., 28800", required=True
+            label="Default Respawn (h/m/s)",
+            placeholder="e.g., 8h, 30m, 45s, 2h30m",
+            required=True
         )
         self.add_item(self.boss_name)
         self.add_item(self.respawn)
@@ -323,11 +316,9 @@ class AddBossModal(discord.ui.Modal, title="Add New Boss"):
     async def on_submit(self, interaction: discord.Interaction):
         name = self.boss_name.value.strip()
         try:
-            respawn_seconds = int(self.respawn.value.strip())
-        except ValueError:
-            await interaction.response.send_message(
-                "❌ Respawn time must be a number of seconds.", ephemeral=True
-            )
+            respawn_seconds = parse_tokens_duration(self.respawn.value.strip())
+        except ValueError as e:
+            await interaction.response.send_message(f"❌ {e}", ephemeral=True)
             return
 
         if not find_master_boss(name):
@@ -335,85 +326,65 @@ class AddBossModal(discord.ui.Modal, title="Add New Boss"):
             await save_json(BOSSES_FILE, bosses_master)
 
         ensure_channel_record(self.cid)
-        if not any(
-            b["name"].lower() == name.lower() for b in channel_data[self.cid]["bosses"]
-        ):
-            channel_data[self.cid]["bosses"].append(
-                {"name": name, "respawn": respawn_seconds}
-            )
+        if not any(b["name"].lower() == name.lower() for b in channel_data[self.cid]["bosses"]):
+            channel_data[self.cid]["bosses"].append({"name": name, "respawn": respawn_seconds})
             await save_json(CHANNEL_DATA_FILE, channel_data)
 
         await update_dashboard_message(self.cid)
         await interaction.response.send_message(
-            f"✅ Boss '{name}' added ({respawn_seconds}s).", ephemeral=True
+            f"✅ Boss '{name}' added ({fmt_hms(respawn_seconds)} default).", ephemeral=True
         )
 
+class RemoveBossDropdown(discord.ui.Select):
+    def __init__(self, cid: str):
+        self.cid = cid
+        options = [discord.SelectOption(label=b["name"]) for b in get_channel_bosses(cid)]
+        if not options:
+            options = [discord.SelectOption(label="(No bosses)", default=True)]
+        super().__init__(placeholder="Select boss to remove", min_values=1, max_values=1, options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        choice = self.values[0]
+        if choice == "(No bosses)":
+            await interaction.response.send_message("No bosses to remove.", ephemeral=True)
+            return
+        ensure_channel_record(self.cid)
+        channel_data[self.cid]["bosses"] = [b for b in channel_data[self.cid]["bosses"] if b["name"] != choice]
+        channel_data[self.cid]["timers"].pop(choice, None)
+        channel_data[self.cid]["subs"].pop(choice, None)
+        channel_data[self.cid]["creators"].pop(choice, None)
+        channel_data[self.cid]["alerts"].pop(choice, None)
+        await save_json(CHANNEL_DATA_FILE, channel_data)
+        await update_dashboard_message(self.cid)
+        await interaction.response.send_message(f"🗑 Removed '{choice}' from this channel.", ephemeral=True)
 
 class AddBossButton(discord.ui.Button):
     def __init__(self, cid: str):
         super().__init__(label="➕ Add Boss", style=discord.ButtonStyle.green)
         self.cid = cid
-
     async def callback(self, interaction: discord.Interaction):
         await interaction.response.send_modal(AddBossModal(self.cid))
-
-
-class RemoveBossDropdown(discord.ui.Select):
-    def __init__(self, cid: str):
-        self.cid = cid
-        options = [
-            discord.SelectOption(label=b["name"]) for b in get_channel_bosses(cid)
-        ]
-        if not options:
-            options = [discord.SelectOption(label="(No bosses)", default=True)]
-        super().__init__(
-            placeholder="Select boss to remove",
-            min_values=1,
-            max_values=1,
-            options=options,
-        )
-
-    async def callback(self, interaction: discord.Interaction):
-        choice = self.values[0]
-        if choice == "(No bosses)":
-            await interaction.response.send_message(
-                "No bosses to remove.", ephemeral=True
-            )
-            return
-        ensure_channel_record(self.cid)
-        channel_data[self.cid]["bosses"] = [
-            b for b in channel_data[self.cid]["bosses"] if b["name"] != choice
-        ]
-        channel_data[self.cid]["timers"].pop(choice, None)
-        await save_json(CHANNEL_DATA_FILE, channel_data)
-        await update_dashboard_message(self.cid)
-        await interaction.response.send_message(
-            f"🗑 Removed '{choice}' from this channel.", ephemeral=True
-        )
-
 
 class RemoveBossButton(discord.ui.Button):
     def __init__(self, cid: str):
         super().__init__(label="🗑 Remove Boss", style=discord.ButtonStyle.danger)
         self.cid = cid
-
     async def callback(self, interaction: discord.Interaction):
         view = discord.ui.View(timeout=60)
         view.add_item(RemoveBossDropdown(self.cid))
-        await interaction.response.send_message(
-            "Choose a boss to remove:", view=view, ephemeral=True
-        )
-
+        await interaction.response.send_message("Choose a boss to remove:", view=view, ephemeral=True)
 
 class DashboardView(discord.ui.View):
     def __init__(self, cid: str):
         super().__init__(timeout=None)
         self.cid = cid
         for b in get_channel_bosses(cid):
-            self.add_item(BossDropdown(cid, b["name"]))
+            name = b["name"]
+            self.add_item(BossDropdown(cid, name))
+            self.add_item(SubscribeButton(cid, name))
+            self.add_item(UnsubscribeButton(cid, name))
         self.add_item(AddBossButton(cid))
         self.add_item(RemoveBossButton(cid))
-
 
 # ----------------------------
 # Dashboard render/update
@@ -432,12 +403,46 @@ async def update_dashboard_message(channel_id: str):
     embed, files = build_dashboard_embed_and_files(channel_id)
     await msg.edit(embed=embed, view=DashboardView(channel_id), attachments=files)
 
-
 @tasks.loop(minutes=1)
 async def update_dashboards():
     for channel_id in list(dashboards.keys()):
+        await process_alerts_for_channel(channel_id)
         await update_dashboard_message(channel_id)
 
+async def process_alerts_for_channel(channel_id: str):
+    ensure_channel_record(channel_id)
+    channel = bot.get_channel(int(channel_id))
+    if not channel:
+        return
+
+    timers = channel_data[channel_id]["timers"]
+    alerts = channel_data[channel_id]["alerts"]
+
+    for boss_name, ts in list(timers.items()):
+        remaining = ts - now_ts()
+        boss_alerts = alerts.setdefault(boss_name, {"warn60": False, "respawned": False})
+
+        # Warn at T-60s (only once) — NOW WITH MENTIONS
+        if 0 < remaining <= 60 and not boss_alerts.get("warn60", False):
+            mentions = build_mentions(channel_id, boss_name)
+            mention_prefix = f"{mentions} " if mentions else ""
+            try:
+                await channel.send(f"{mention_prefix}⏳ **{boss_name}** respawns in ~60s.")
+            except Exception:
+                pass
+            boss_alerts["warn60"] = True
+
+        # Final respawn alert at or after due time (only once)
+        if remaining <= 0 and not boss_alerts.get("respawned", False):
+            mentions = build_mentions(channel_id, boss_name)
+            mention_prefix = f"{mentions} " if mentions else ""
+            try:
+                await channel.send(f"{mention_prefix}**{boss_name}** Has Respawned! GO GO GO!")
+            except Exception:
+                pass
+            boss_alerts["respawned"] = True
+
+    await save_json(CHANNEL_DATA_FILE, channel_data)
 
 # ----------------------------
 # Slash Commands
@@ -448,32 +453,22 @@ async def on_ready():
     update_dashboards.start()
     print(f"Logged in as {bot.user}")
 
-
 @bot.tree.error
-async def on_app_command_error(
-    interaction: discord.Interaction, error: app_commands.AppCommandError
-):
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     if isinstance(error, app_commands.MissingPermissions):
         if interaction.response.is_done():
-            await interaction.followup.send(
-                "❌ You need administrator permission to run this command.",
-                ephemeral=True,
-            )
+            await interaction.followup.send("❌ You need administrator permission to run this command.", ephemeral=True)
         else:
-            await interaction.response.send_message(
-                "❌ You need administrator permission to run this command.",
-                ephemeral=True,
-            )
+            await interaction.response.send_message("❌ You need administrator permission to run this command.", ephemeral=True)
     else:
         if interaction.response.is_done():
             await interaction.followup.send(f"❌ {error}", ephemeral=True)
         else:
             await interaction.response.send_message(f"❌ {error}", ephemeral=True)
 
-
-@bot.tree.command(description="Create a boss dashboard in this channel.")
+@bot.tree.command(name="setdashboard", description="Create a boss dashboard in this channel.")
 @app_commands.guild_only()
-async def timers_cmd(interaction: discord.Interaction):
+async def setdashboard(interaction: discord.Interaction):
     channel_id = str(interaction.channel.id)
     ensure_channel_record(channel_id)
 
@@ -481,18 +476,13 @@ async def timers_cmd(interaction: discord.Interaction):
         msg_id = dashboards[channel_id]
         try:
             msg = await interaction.channel.fetch_message(int(msg_id))
-            await interaction.response.send_message(
-                f"Dashboard already exists: {msg.jump_url}",
-                ephemeral=True,
-            )
+            await interaction.response.send_message(f"Dashboard already exists: {msg.jump_url}", ephemeral=True)
             return
         except discord.NotFound:
             pass
 
     embed, files = build_dashboard_embed_and_files(channel_id)
-    msg = await interaction.channel.send(
-        embed=embed, view=DashboardView(channel_id), files=files
-    )
+    msg = await interaction.channel.send(embed=embed, view=DashboardView(channel_id), files=files)
     dashboards[channel_id] = str(msg.id)
     await save_json(DASHBOARDS_FILE, dashboards)
 
@@ -501,47 +491,37 @@ async def timers_cmd(interaction: discord.Interaction):
     except (discord.Forbidden, discord.HTTPException):
         pass
 
-    await interaction.response.send_message(
-        f"Dashboard created: {msg.jump_url}", ephemeral=True
-    )
+    await interaction.response.send_message(f"Dashboard created: {msg.jump_url}", ephemeral=True)
 
-
-@bot.tree.command(
-    description="Set remaining time for a boss in this channel (flexible formats)."
-)
-@app_commands.describe(
-    name="Exact boss name",
-    hhmmss="Time left (e.g., 00:02:00, 2h15m, 90m, 45s, 23:59). Bare numbers = minutes.",
-)
+@bot.tree.command(description="Edit remaining time for a boss in this channel (use h/m/s tokens).")
+@app_commands.describe(name="Exact boss name", duration="e.g., 1h, 30m, 45s, 1h30m, 1.5h")
 @app_commands.guild_only()
-async def edittime(interaction: discord.Interaction, name: str, hhmmss: str):
+async def edittime(interaction: discord.Interaction, name: str, duration: str):
     cid = str(interaction.channel.id)
     if not any(b["name"].lower() == name.lower() for b in get_channel_bosses(cid)):
-        await interaction.response.send_message(
-            "❌ Boss not tracked in this channel.", ephemeral=True
-        )
+        await interaction.response.send_message("❌ Boss not tracked in this channel.", ephemeral=True)
         return
     try:
-        secs = parse_time_input(hhmmss)
+        secs = parse_tokens_duration(duration)
     except Exception as e:
         await interaction.response.send_message(f"❌ {e}", ephemeral=True)
         return
 
-    await set_boss_remaining(cid, name, secs)
+    await set_boss_remaining(cid, name, secs, created_by=interaction.user.id)
     await update_dashboard_message(cid)
-    await interaction.response.send_message(
-        f"⏱ Set **{name}** to `{hhmmss}` (~{fmt_hms(secs)}).", ephemeral=True
-    )
-
+    await interaction.response.send_message(f"⏱ Set **{name}** to `{duration}` (~{fmt_hms(secs)}).", ephemeral=True)
 
 @bot.tree.command(description="Add a boss (admin). Also updates master list if needed.")
-@app_commands.describe(
-    name="Boss name", respawn_seconds="Default respawn time in seconds"
-)
+@app_commands.describe(name="Boss name", respawn="Default respawn (h/m/s tokens, e.g., 8h, 30m, 2h30m)")
 @app_commands.checks.has_permissions(administrator=True)
 @app_commands.guild_only()
-async def addboss(interaction: discord.Interaction, name: str, respawn_seconds: int):
+async def addboss(interaction: discord.Interaction, name: str, respawn: str):
     cid = str(interaction.channel.id)
+    try:
+        respawn_seconds = parse_tokens_duration(respawn)
+    except ValueError as e:
+        await interaction.response.send_message(f"❌ {e}", ephemeral=True)
+        return
 
     if not find_master_boss(name):
         bosses_master.append({"name": name, "respawn": respawn_seconds})
@@ -553,10 +533,7 @@ async def addboss(interaction: discord.Interaction, name: str, respawn_seconds: 
         await save_json(CHANNEL_DATA_FILE, channel_data)
 
     await update_dashboard_message(cid)
-    await interaction.response.send_message(
-        f"✅ Boss '{name}' added ({respawn_seconds}s).", ephemeral=True
-    )
-
+    await interaction.response.send_message(f"✅ Boss '{name}' added ({fmt_hms(respawn_seconds)} default).", ephemeral=True)
 
 @bot.tree.command(description="Remove a boss from THIS channel only.")
 @app_commands.describe(name="Boss name to remove")
@@ -566,34 +543,60 @@ async def removeboss(interaction: discord.Interaction, name: str):
     cid = str(interaction.channel.id)
     ensure_channel_record(cid)
     before = len(channel_data[cid]["bosses"])
-    channel_data[cid]["bosses"] = [
-        b for b in channel_data[cid]["bosses"] if b["name"].lower() != name.lower()
-    ]
+    channel_data[cid]["bosses"] = [b for b in channel_data[cid]["bosses"] if b["name"].lower() != name.lower()]
     channel_data[cid]["timers"].pop(name, None)
+    channel_data[cid]["subs"].pop(name, None)
+    channel_data[cid]["creators"].pop(name, None)
+    channel_data[cid]["alerts"].pop(name, None)
     await save_json(CHANNEL_DATA_FILE, channel_data)
     await update_dashboard_message(cid)
     after = len(channel_data[cid]["bosses"])
     if before == after:
-        await interaction.response.send_message(
-            "❌ Boss not found in this channel.", ephemeral=True
-        )
+        await interaction.response.send_message("❌ Boss not found in this channel.", ephemeral=True)
     else:
-        await interaction.response.send_message(
-            f"🗑 Removed '{name}' from this channel.", ephemeral=True
-        )
+        await interaction.response.send_message(f"🗑 Removed '{name}' from this channel.", ephemeral=True)
 
-
-@bot.tree.command(description="Mark a boss as killed (uses default respawn).")
+@bot.tree.command(description="Reset a boss timer to its default respawn.")
 @app_commands.describe(name="Exact boss name")
 @app_commands.guild_only()
 async def reset(interaction: discord.Interaction, name: str):
     cid = str(interaction.channel.id)
-    ok = await reset_boss_timer(cid, name)
+    ok = await reset_boss_timer(cid, name, created_by=interaction.user.id)
     await update_dashboard_message(cid)
     await interaction.response.send_message(
         f"{'✅' if ok else '❌'} {name} {'timer reset.' if ok else 'not found.'}",
         ephemeral=True,
     )
+
+@bot.tree.command(description="List bosses tracked in this channel with default respawns.")
+@app_commands.guild_only()
+async def listbosses(interaction: discord.Interaction):
+    cid = str(interaction.channel.id)
+    bosses = get_channel_bosses(cid)
+    if not bosses:
+        await interaction.response.send_message(
+            "No bosses are tracked in this channel. Use **/addboss** or the **➕ Add Boss** button.",
+            ephemeral=True,
+        )
+        return
+
+    lines = []
+    for b in bosses:
+        name = b.get("name", "Unknown")
+        resp = b.get("respawn")
+        if resp is None:
+            master = find_master_boss(name)
+            resp = int(master["respawn"]) if master else 0
+        subs_count = len(get_channel_subs(cid, name))
+        lines.append(f"• **{name}** — default `{fmt_hms(int(resp))}` · {subs_count} subs")
+
+    embed = discord.Embed(title="Tracked Bosses", description="\n".join(lines), color=0x3B82F6)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="about", description="About this bot.")
+@app_commands.guild_only()
+async def about(interaction: discord.Interaction):
+    await interaction.response.send_message("This is based off a true story...", ephemeral=True)
 
 # ----------------------------
 # Run

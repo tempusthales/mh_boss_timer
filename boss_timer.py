@@ -60,8 +60,8 @@ dashboards = _load_sync(DASHBOARDS_FILE, {})  # {cid: msg_id}
 # Bot
 # ----------------------------
 intents = discord.Intents.default()
-intents.message_content = False
-bot = commands.Bot(command_prefix="!", intents=intents)
+# intents.message_content = False <--- DEPRECATED
+# bot = commands.Bot(command_prefix="!", intents=intents) <--- DEPRECATED
 
 # ----------------------------
 # Helpers
@@ -514,7 +514,7 @@ async def timers_cmd(interaction: discord.Interaction):
     hhmmss="Time left (e.g., 00:02:00, 2h15m, 90m, 45s, 23:59). Bare numbers = minutes.",
 )
 @app_commands.guild_only()
-async def settime(interaction: discord.Interaction, name: str, hhmmss: str):
+async def edittime(interaction: discord.Interaction, name: str, hhmmss: str):
     cid = str(interaction.channel.id)
     if not any(b["name"].lower() == name.lower() for b in get_channel_bosses(cid)):
         await interaction.response.send_message(

@@ -5,9 +5,6 @@ import os, json, asyncio
 from datetime import datetime
 from dotenv import load_dotenv
 
-#
-# Original Source from ChatGPT5
-#
 # ----------------------------
 # Setup
 # ----------------------------

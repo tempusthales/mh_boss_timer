@@ -2,7 +2,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 import os, json, asyncio, tempfile
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 from logging.handlers import RotatingFileHandler
 from dotenv import load_dotenv
@@ -13,9 +13,12 @@ from dotenv import load_dotenv
 def setup_logging():
     log_dir = "logs"
     if not os.path.exists(log_dir):
-        os.makedirs(log_dir)
-    
-    log_file = os.path.join(log_dir, f"bot_{datetime.now().strftime('%Y-%m-%d')}.log")
+        try:
+            os.makedirs(log_dir)
+            logger.info(f"Created log directory: {log_dir}")
+        except Exception as e:
+            print(f"Failed to create log directory {log_dir}: {e}")
+    log_file = os.path.join(log_dir, f"bot_{datetime.now(timezone.UTC).strftime('%Y-%m-%d')}.log")
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
@@ -105,7 +108,7 @@ def fmt_hms(seconds: float) -> str:
     return f"{'-' if neg else ''}{h:02}:{m:02}:{s:02}"
 
 def now_ts() -> int:
-    return int(datetime.utcnow().timestamp())
+    return int(datetime.now(timezone.UTC).timestamp())
 
 def ensure_channel_record(cid: str):
     if cid not in channel_data:
@@ -172,7 +175,10 @@ async def set_boss_remaining(cid: str, boss_name: str, remaining_seconds: int):
 async def refresh_all_dashboards():
     logger.info("Refreshing all dashboards")
     for channel_id in list(dashboards.keys()):
-        await update_dashboard_message(channel_id)
+        try:
+            await update_dashboard_message(channel_id)
+        except Exception as e:
+            logger.error(f"Failed to update dashboard for channel {channel_id}: {e}")
     logger.info("Finished refreshing all dashboards")
 
 # ----------------------------
@@ -336,6 +342,12 @@ async def update_dashboard_message(channel_id: str):
         dashboards.pop(channel_id, None)
         await save_json(DASHBOARDS_FILE, dashboards)
         return
+    except discord.Forbidden:
+        logger.error(f"Bot lacks permission to fetch message {dashboards[channel_id]} in channel {channel_id}")
+        return
+    except discord.HTTPException as e:
+        logger.error(f"HTTP error fetching message {dashboards[channel_id]} in channel {channel_id}: {e}")
+        return
 
     ensure_channel_record(channel_id)
     bosses = get_channel_bosses(channel_id)
@@ -367,24 +379,29 @@ async def update_dashboard_message(channel_id: str):
     try:
         await msg.edit(embed=embed, view=DashboardView(channel_id), attachments=files)
         logger.info(f"Updated dashboard message for channel {channel_id}")
+    except discord.Forbidden:
+        logger.error(f"Bot lacks permission to edit message {dashboards[channel_id]} in channel {channel_id}")
+    except discord.HTTPException as e:
+        logger.error(f"HTTP error editing dashboard message {dashboards[channel_id]} in channel {channel_id}: {e}")
     except Exception as e:
-        logger.error(f"Failed to update dashboard message for channel {channel_id}: {e}")
+        logger.error(f"Unexpected error updating dashboard for channel {channel_id}: {e}")
 
 @tasks.loop(seconds=60)  # Update every minute
 async def update_dashboards():
     logger.info("Starting dashboard update cycle")
-    for channel_id in list(dashboards.keys()):
-        await update_dashboard_message(channel_id)
-    logger.info("Completed dashboard update cycle")
+    await refresh_all_dashboards()
 
 # ----------------------------
 # Slash Commands
 # ----------------------------
 @bot.event
 async def on_ready():
-    await bot.tree.sync()
+    try:
+        await bot.tree.sync()
+        logger.info(f"Bot logged in as {bot.user} and command tree synced")
+    except Exception as e:
+        logger.error(f"Failed to sync command tree: {e}")
     update_dashboards.start()
-    logger.info(f"Bot logged in as {bot.user} and command tree synced")
 
 @bot.tree.command(description="Create a boss dashboard in this channel.")
 async def setdashboard(interaction: discord.Interaction):

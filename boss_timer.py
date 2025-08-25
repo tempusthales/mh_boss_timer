@@ -229,11 +229,11 @@ class EditTimeModal(discord.ui.Modal):
             secs = parse_time(self.time_input.value)
         except Exception as e:
             logger.error(f"Invalid time input '{self.time_input.value}' for boss {self.boss_name}: {e}")
-            await interaction.response.send_message(f"❌ {e}", ephemeral=True)
+            await interaction.response.send_message(f"❌ {e}", ephemeral=True, delete_after=10)
             return
         await set_boss_remaining(self.cid, self.boss_name, secs)
         await update_dashboard_message(self.cid)
-        await interaction.response.send_message(f"⏱ Set **{self.boss_name}** to `{self.time_input.value}` remaining.", ephemeral=True)
+        await interaction.response.send_message(f"⏱ Set **{self.boss_name}** to `{self.time_input.value}` remaining.", ephemeral=True, delete_after=10)
         logger.info(f"Successfully updated time for boss {self.boss_name} to {self.time_input.value}")
 
 class BossDropdown(discord.ui.Select):
@@ -257,7 +257,7 @@ class BossDropdown(discord.ui.Select):
             ok = await reset_boss_timer(self.cid, self.boss_name)
             await update_dashboard_message(self.cid)
             msg = "timer reset." if ok else "boss not found."
-            await interaction.response.send_message(f"✅ **{self.boss_name}** {msg}", ephemeral=True)
+            await interaction.response.send_message(f"✅ **{self.boss_name}** {msg}", ephemeral=True, delete_after=10)
             logger.info(f"Killed action result: {msg} for boss {self.boss_name}")
         elif choice == "Edit Time":
             await interaction.response.send_modal(EditTimeModal(self.cid, self.boss_name))

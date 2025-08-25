@@ -543,7 +543,7 @@ async def addboss(interaction: discord.Interaction, name: str, respawn_time: str
         logger.info(f"Added boss {name} to channel {cid}")
 
     await update_dashboard_message(cid)
-    await interaction.response.send_message(f"✅ Boss '{name}' added ({respawn_time}).", ephemeral=True, delete_after=10)
+    await interaction.response.send_message(f"✅ Boss '{name}' added ({respawn_time}).", ephemeral=True)
 
 @bot.tree.command(description="Remove a boss from THIS channel only.")
 @app_commands.describe(name="Boss name to remove")

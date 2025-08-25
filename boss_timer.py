@@ -229,11 +229,11 @@ class EditTimeModal(discord.ui.Modal):
             secs = parse_time(self.time_input.value)
         except Exception as e:
             logger.error(f"Invalid time input '{self.time_input.value}' for boss {self.boss_name}: {e}")
-            await interaction.response.send_message(f"❌ {e}", ephemeral=True)
+            await interaction.response.send_message(f"❌ {e}", ephemeral=True, delete_after=10)
             return
         await set_boss_remaining(self.cid, self.boss_name, secs)
         await update_dashboard_message(self.cid)
-        await interaction.response.send_message(f"⏱ Set **{self.boss_name}** to `{self.time_input.value}` remaining.", ephemeral=True)
+        await interaction.response.send_message(f"⏱ Set **{self.boss_name}** to `{self.time_input.value}` remaining.", ephemeral=True, delete_after=10)
         logger.info(f"Successfully updated time for boss {self.boss_name} to {self.time_input.value}")
 
 class BossDropdown(discord.ui.Select):
@@ -257,7 +257,7 @@ class BossDropdown(discord.ui.Select):
             ok = await reset_boss_timer(self.cid, self.boss_name)
             await update_dashboard_message(self.cid)
             msg = "timer reset." if ok else "boss not found."
-            await interaction.response.send_message(f"✅ **{self.boss_name}** {msg}", ephemeral=True)
+            await interaction.response.send_message(f"✅ **{self.boss_name}** {msg}", ephemeral=True, delete_after=10)
             logger.info(f"Killed action result: {msg} for boss {self.boss_name}")
         elif choice == "Edit Time":
             await interaction.response.send_modal(EditTimeModal(self.cid, self.boss_name))
@@ -282,7 +282,7 @@ class AddBossModal(discord.ui.Modal, title="Add New Boss"):
             respawn_seconds = parse_time(self.respawn.value.strip())
         except ValueError as e:
             logger.error(f"Invalid respawn time '{self.respawn.value}' for boss {name}: {e}")
-            await interaction.response.send_message(f"❌ {e}", ephemeral=True)
+            await interaction.response.send_message(f"❌ {e}", ephemeral=True, delete_after=10)
             return
 
         if not find_master_boss(name):
@@ -299,7 +299,7 @@ class AddBossModal(discord.ui.Modal, title="Add New Boss"):
             await set_boss_remaining(self.cid, name, respawn_seconds)
 
         await update_dashboard_message(self.cid)
-        await interaction.response.send_message(f"✅ Boss '{name}' added ({self.respawn.value}).", ephemeral=True)
+        await interaction.response.send_message(f"✅ Boss '{name}' added ({self.respawn.value}).", ephemeral=True, delete_after=10)
 
 class AddBossButton(discord.ui.Button):
     def __init__(self, cid: str):
@@ -321,7 +321,7 @@ class RemoveBossDropdown(discord.ui.Select):
         choice = self.values[0]
         logger.info(f"RemoveBossDropdown action: Removing {choice} from channel {self.cid}")
         if choice == "(No bosses)":
-            await interaction.response.send_message("No bosses to remove.", ephemeral=True)
+            await interaction.response.send_message("No bosses to remove.", ephemeral=True, delete_after=10)
             logger.info("No bosses available to remove")
             return
         ensure_channel_record(self.cid)
@@ -329,7 +329,7 @@ class RemoveBossDropdown(discord.ui.Select):
         channel_data[self.cid]["timers"].pop(choice, None)
         await save_json(CHANNEL_DATA_FILE, channel_data)
         await update_dashboard_message(self.cid)
-        await interaction.response.send_message(f"🗑 Removed '{choice}' from this channel.", ephemeral=True)
+        await interaction.response.send_message(f"🗑 Removed '{choice}' from this channel.", ephemeral=True, delete_after=10)
         logger.info(f"Removed boss {choice} from channel {self.cid}")
 
 class RemoveBossButton(discord.ui.Button):
@@ -340,7 +340,7 @@ class RemoveBossButton(discord.ui.Button):
         logger.info(f"RemoveBossButton clicked in channel {self.cid}")
         view = discord.ui.View(timeout=60)
         view.add_item(RemoveBossDropdown(self.cid))
-        await interaction.response.send_message("Choose a boss to remove:", view=view, ephemeral=True)
+        await interaction.response.send_message("Choose a boss to remove:", view=view, ephemeral=True, delete_after=30)
 
 class DashboardView(discord.ui.View):
     def __init__(self, cid: str):
@@ -513,7 +513,7 @@ async def setdashboard(interaction: discord.Interaction):
         logger.info(f"Created dashboard for channel {channel_id}, message ID: {msg.id}")
     except Exception as e:
         logger.error(f"Failed to create dashboard for channel {channel_id}: {e}")
-        await interaction.response.send_message("❌ Failed to create dashboard.", ephemeral=True)
+        await interaction.response.send_message("❌ Failed to create dashboard.", ephemeral=True, delete_after=10)
         return
 
     if interaction.channel.permissions_for(interaction.guild.me).manage_messages:
@@ -527,7 +527,7 @@ async def setdashboard(interaction: discord.Interaction):
         await interaction.channel.send("⚠️ Bot lacks 'Manage Messages' permission to pin the dashboard.")
         logger.warning(f"Bot lacks permission to pin dashboard in channel {channel_id}")
 
-    await interaction.response.send_message(f"Dashboard created: {msg.jump_url}", ephemeral=True)
+    await interaction.response.send_message(f"Dashboard created: {msg.jump_url}", ephemeral=True, delete_after=10)
 
 @bot.tree.command(description="Set remaining time for a boss in this channel (e.g., 1h30m).")
 @app_commands.describe(name="Exact boss name", time="Time left, e.g., 1h, 30m, or 1h30m")
@@ -535,19 +535,19 @@ async def updatetime(interaction: discord.Interaction, name: str, time: str):
     cid = str(interaction.channel.id)
     logger.info(f"/updatetime called for boss {name} with time {time} in channel {cid} by {interaction.user}")
     if not any(b["name"].lower() == name.lower() for b in get_channel_bosses(cid)):
-        await interaction.response.send_message("❌ Boss not tracked in this channel.", ephemeral=True)
+        await interaction.response.send_message("❌ Boss not tracked in this channel.", ephemeral=True, delete_after=10)
         logger.warning(f"Boss {name} not tracked in channel {cid}")
         return
     try:
         secs = parse_time(time)
     except Exception as e:
         logger.error(f"Invalid time format '{time}' for boss {name} in channel {cid}: {e}")
-        await interaction.response.send_message(f"❌ {e}", ephemeral=True)
+        await interaction.response.send_message(f"❌ {e}", ephemeral=True, delete_after=10)
         return
 
     await set_boss_remaining(cid, name, secs)
     await update_dashboard_message(cid)
-    await interaction.response.send_message(f"⏱ Set **{name}** to `{time}` remaining.", ephemeral=True)
+    await interaction.response.send_message(f"⏱ Set **{name}** to `{time}` remaining.", ephemeral=True, delete_after=10)
     logger.info(f"Successfully set {name} to {time} remaining in channel {cid}")
 
 @bot.tree.command(description="Add a boss (admin). Also updates master list if needed.")
@@ -561,7 +561,7 @@ async def addboss(interaction: discord.Interaction, name: str, respawn_time: str
         respawn_seconds = parse_time(respawn_time)
     except ValueError as e:
         logger.error(f"Invalid respawn time '{respawn_time}' for boss {name}: {e}")
-        await interaction.response.send_message(f"❌ {e}", ephemeral=True)
+        await interaction.response.send_message(f"❌ {e}", ephemeral=True, delete_after=10)
         return
 
     if not find_master_boss(name):
@@ -576,7 +576,7 @@ async def addboss(interaction: discord.Interaction, name: str, respawn_time: str
         logger.info(f"Added boss {name} to channel {cid}")
 
     await update_dashboard_message(cid)
-    await interaction.response.send_message(f"✅ Boss '{name}' added ({respawn_time}).", ephemeral=True)
+    await interaction.response.send_message(f"✅ Boss '{name}' added ({respawn_time}).", ephemeral=True, delete_after=10)
 
 @bot.tree.command(description="Remove a boss from THIS channel only.")
 @app_commands.describe(name="Boss name to remove")
@@ -592,10 +592,10 @@ async def removeboss(interaction: discord.Interaction, name: str):
     await update_dashboard_message(cid)
     after = len(channel_data[cid]["bosses"])
     if before == after:
-        await interaction.response.send_message("❌ Boss not found in this channel.", ephemeral=True)
+        await interaction.response.send_message("❌ Boss not found in this channel.", ephemeral=True, delete_after=10)
         logger.warning(f"Boss {name} not found in channel {cid}")
     else:
-        await interaction.response.send_message(f"🗑 Removed '{name}' from this channel.", ephemeral=True)
+        await interaction.response.send_message(f"🗑 Removed '{name}' from this channel.", ephemeral=True, delete_after=10)
         logger.info(f"Removed boss {name} from channel {cid}")
 
 @bot.tree.command(description="Mark a boss as killed (uses default respawn).")

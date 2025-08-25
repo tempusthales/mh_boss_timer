@@ -193,6 +193,21 @@ async def refresh_all_dashboards():
             logger.error(f"Failed to update dashboard for channel {channel_id}: {e}")
     logger.info("Finished refreshing all dashboards")
 
+
+# ----------------------------
+# Event Listeners
+# ----------------------------
+
+# Register a listener for message deletion events
+@bot.event
+async def on_message_delete(message):
+    # Check if the deleted message is a dashboard message
+    for channel_id, dash_msg_id in list(dashboards.items()):
+        if str(dash_msg_id) == str(message.id):
+            dashboards.pop(channel_id, None)
+            await save_json(DASHBOARDS_FILE, dashboards)
+            logger.info(f"Dashboard message {message.id} deleted in channel {channel_id}. Dashboard reference removed.")
+
 # ----------------------------
 # UI Components
 # ----------------------------

@@ -406,7 +406,7 @@ async def update_dashboard_message(channel_id: str):
             # Send a warning if timer enters 1-60s window and hasn't been warned yet
             if 1 <= remaining <= 90 and name not in warned_bosses:
                 try:
-                    await channel.send(f"{name} will be ready in {remaining} seconds")
+                    await channel.send(f"{name} will be ready in {remaining} seconds", delete_after=25)
                     logger.info(f"Sent warning for boss {name} in channel {channel_id}")
                     warned_bosses.add(name)
                 except Exception as e:

@@ -282,7 +282,7 @@ class AddBossModal(discord.ui.Modal, title="Add New Boss"):
             respawn_seconds = parse_time(self.respawn.value.strip())
         except ValueError as e:
             logger.error(f"Invalid respawn time '{self.respawn.value}' for boss {name}: {e}")
-            await interaction.response.send_message(f"❌ {e}", ephemeral=True)
+            await interaction.response.send_message(f"❌ {e}", ephemeral=True, delete_after=10)
             return
 
         if not find_master_boss(name):
@@ -299,7 +299,7 @@ class AddBossModal(discord.ui.Modal, title="Add New Boss"):
             await set_boss_remaining(self.cid, name, respawn_seconds)
 
         await update_dashboard_message(self.cid)
-        await interaction.response.send_message(f"✅ Boss '{name}' added ({self.respawn.value}).", ephemeral=True)
+        await interaction.response.send_message(f"✅ Boss '{name}' added ({self.respawn.value}).", ephemeral=True, delete_after=10)
 
 class AddBossButton(discord.ui.Button):
     def __init__(self, cid: str):
@@ -321,7 +321,7 @@ class RemoveBossDropdown(discord.ui.Select):
         choice = self.values[0]
         logger.info(f"RemoveBossDropdown action: Removing {choice} from channel {self.cid}")
         if choice == "(No bosses)":
-            await interaction.response.send_message("No bosses to remove.", ephemeral=True)
+            await interaction.response.send_message("No bosses to remove.", ephemeral=True, delete_after=10)
             logger.info("No bosses available to remove")
             return
         ensure_channel_record(self.cid)
@@ -329,7 +329,7 @@ class RemoveBossDropdown(discord.ui.Select):
         channel_data[self.cid]["timers"].pop(choice, None)
         await save_json(CHANNEL_DATA_FILE, channel_data)
         await update_dashboard_message(self.cid)
-        await interaction.response.send_message(f"🗑 Removed '{choice}' from this channel.", ephemeral=True)
+        await interaction.response.send_message(f"🗑 Removed '{choice}' from this channel.", ephemeral=True, delete_after=10)
         logger.info(f"Removed boss {choice} from channel {self.cid}")
 
 class RemoveBossButton(discord.ui.Button):

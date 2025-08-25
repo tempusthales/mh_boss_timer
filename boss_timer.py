@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 # Logging Setup
 # ----------------------------
 def setup_logging():
-    log_file = f"bot_{datetime.now(timezone.UTC).strftime('%Y-%m-%d')}.log"
+    log_file = f"bot_{datetime.now(timezone.utc).strftime('%Y-%m-%d')}.log"
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",

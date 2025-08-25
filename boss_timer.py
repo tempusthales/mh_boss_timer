@@ -120,7 +120,7 @@ def fmt_hms(seconds: float) -> str:
     return f"{'-' if neg else ''}{h:02}:{m:02}:{s:02}"
 
 def now_ts() -> int:
-    return int(datetime.now(timezone.UTC).timestamp())
+    return int(datetime.now(timezone.utc).timestamp())
 
 def ensure_channel_record(cid: str):
     if cid not in channel_data:

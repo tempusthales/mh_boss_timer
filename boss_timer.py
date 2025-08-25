@@ -280,6 +280,8 @@ class AddBossModal(discord.ui.Modal, title="Add New Boss"):
             channel_data[self.cid]["bosses"].append({"name": name, "respawn": respawn_seconds})
             await save_json(CHANNEL_DATA_FILE, channel_data)
             logger.info(f"Added boss {name} to channel {self.cid}")
+            # Set timer for new boss so countdown starts immediately
+            await set_boss_remaining(self.cid, name, respawn_seconds)
 
         await update_dashboard_message(self.cid)
         await interaction.response.send_message(f"✅ Boss '{name}' added ({self.respawn.value}).", ephemeral=True)

@@ -391,6 +391,11 @@ async def update_dashboard_message(channel_id: str):
     timers = get_channel_timers(channel_id)
 
     lines = []
+    # Track which bosses have already received the 60s warning per channel
+    if not hasattr(update_dashboard_message, "warned_bosses"):
+        update_dashboard_message.warned_bosses = {}
+    warned_bosses = update_dashboard_message.warned_bosses.setdefault(channel_id, set())
+
     for b in bosses:
         name = b["name"]
         if name in timers:
@@ -398,6 +403,17 @@ async def update_dashboard_message(channel_id: str):
             hms = fmt_hms(remaining)
             respawn_ts = int(timers[name])
             lines.append(f"**{name}** — Respawns <t:{respawn_ts}:R> (`{hms}`)")
+            # Send a warning if timer enters 1-60s window and hasn't been warned yet
+            if 1 <= remaining <= 90 and name not in warned_bosses:
+                try:
+                    await channel.send(f"{name} will be ready in {remaining} seconds", delete_after=25)
+                    logger.info(f"Sent warning for boss {name} in channel {channel_id}")
+                    warned_bosses.add(name)
+                except Exception as e:
+                    logger.error(f"Failed to send 60 second warning for boss {name} in channel {channel_id}: {e}")
+            # Reset warning if timer is above 60s (for next cycle)
+            elif remaining > 60 and name in warned_bosses:
+                warned_bosses.remove(name)
         else:
             lines.append(f"**{name}** — READY (`00:00:00`)")
 
